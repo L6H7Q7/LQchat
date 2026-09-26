@@ -383,7 +383,8 @@ async function apiSendFile(peerId, peerAddr, file, filePath) {
           "upload_progress",
           (event) => {
             const p = event.payload;
-            updateFileTransferById(p.sender_msg_id, p.transfer_status === "failed" ? "failed" : "uploading",
+            updateFileTransferById(p.sender_msg_id,
+              p.transfer_status === "chunk_failed" ? "chunk_failed" : p.transfer_status === "failed" ? "failed" : "uploading",
               p.transferred, p.total, p.speed_mb_s);
           },
         );

@@ -1388,6 +1388,36 @@ body.android-app .battery-alert-add-level {
   flex: 0 0 auto;
 }
 
+body.android-app .battery-alert-new-level {
+  width: 64px;
+  min-width: 64px;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid var(--android-line);
+  border-radius: 10px;
+  background: var(--android-bg);
+  color: var(--android-ink);
+  text-align: center;
+}
+
+body.android-app .background-stop-confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #a93449;
+}
+body.android-app .background-stop-confirm[hidden] { display: none; }
+body.android-app .background-stop-confirm button {
+  border: 1px solid var(--android-line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--android-bg);
+  color: var(--android-ink);
+}
+
 body.android-app .battery-alert-validation {
   margin: -4px 0 0;
   color: #a93449;

@@ -220,24 +220,19 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
             n
         );
 
-        let response = client
-            .post(&upload_url)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| {
+        let response = match client.post(&upload_url).multipart(form).send().await {
+            Ok(response) => response,
+            Err(e) => {
                 if let Some(id) = message_id {
-                    let pool = state.pool.clone();
-                    tokio::spawn(async move {
-                        let _ = crate::db::update_file_status_by_id(&pool, id, "failed").await;
-                    });
+                    let _ = crate::db::update_file_status_by_id(&state.pool, id, "chunk_failed").await;
                 }
                 let _ = app.emit("upload_progress", serde_json::json!({
-                    "sender_msg_id": message_id, "transfer_status": "failed",
+                    "sender_msg_id": message_id, "transfer_status": "chunk_failed",
                     "transferred": offset, "total": file_size,
                 }));
-                format!("上传分块失败: {}", e)
-            })?;
+                return Err(format!("上传分块失败: {}", e));
+            }
+        };
 
         if !response.status().is_success() {
             let error_text = response
@@ -247,10 +242,10 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
             eprintln!("[Command] ✗ 上传分块失败: {}", error_text);
 
             if let Some(id) = message_id {
-                let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
+                let _ = crate::db::update_file_status_by_id(&state.pool, id, "chunk_failed").await;
             }
             let _ = app.emit("upload_progress", serde_json::json!({
-                "sender_msg_id": message_id, "transfer_status": "failed",
+                "sender_msg_id": message_id, "transfer_status": "chunk_failed",
                 "transferred": offset, "total": file_size,
             }));
 

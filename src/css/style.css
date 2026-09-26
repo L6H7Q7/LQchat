@@ -680,6 +680,8 @@ h2::before {
 .file-transfer-status:empty {
 	visibility: hidden;
 }
+.file-transfer-status.file-transfer-error { color: #ba3348; font-weight: 600; }
+.message.sent .file-transfer-status.file-transfer-error { color: #ffe1e5; }
 
 .file-transfer-progress {
 	width: 100%;

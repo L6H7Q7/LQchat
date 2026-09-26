@@ -560,7 +560,7 @@ function initChat() {
             await refreshCapturedChat(target, { forceLatest: true });
           } catch (e) {
             console.error("[UI] SAF 文件发送失败:", e);
-            alert("文件发送失败: " + e.message);
+            showFileSendFailure(e);
           }
         });
         console.log("[UI] SAF 文件选择器监听已注册");
@@ -1106,7 +1106,7 @@ async function sendMessage(targetPeer = window.currentChatPeer) {
       chatInput.value = draft;
       chatInput.dispatchEvent(new Event("input", { bubbles: true }));
     }
-    alert("发送失败: " + e.message);
+    showMessageActionToast("发送失败：" + getActionErrorMessage(e), 4000);
     return false;
   }
 }
@@ -1572,9 +1572,17 @@ function fileTransferLabel(status, isSent) {
     sent: "已发送", accepted: isSent ? "已发送" : "已完成",
     received: "已完成", completed: "已完成", invalid: "接收失败",
     save_failed: "保存失败", failed: isSent ? "发送失败" : "接收失败",
+    chunk_failed: "分块错误",
     retrying: "重新发送",
   };
   return labels[status] || (isSent ? "已发送" : "已完成");
+}
+
+function showFileSendFailure(error, fileName = "") {
+  const reason = getActionErrorMessage(error);
+  // 分块失败已写入对应文件消息；不再叠加全局提示。
+  if (/上传分块失败|分块错误/.test(reason)) return;
+  showMessageActionToast(`${fileName ? fileName + " " : ""}文件发送失败：${reason}`, 4000);
 }
 
 function formatTransferBytes(bytes) {
@@ -1602,6 +1610,9 @@ function renderFileTransfer(msgEl, status, transferred, total, speedMbS = 0, for
   progress.dataset.total = String(size);
   statusEl.textContent = fileTransferLabel(status, isSent);
   statusEl.className = "file-transfer-status";
+  if (["failed", "chunk_failed", "save_failed", "invalid"].includes(status)) {
+    statusEl.classList.add("file-transfer-error");
+  }
   const active = ["uploading", "downloading", "saving", "retrying"].includes(status);
   progress.hidden = !active;
   progress.querySelector(".file-transfer-fill").style.width = `${percent}%`;
@@ -1625,7 +1636,7 @@ function updateFileTransferById(senderMsgId, status, transferred, total, speedMb
     return;
   }
   renderFileTransfer(msgEl, status, transferred, total, speedMbS, force);
-  if (direction === "sent" && ["sent", "accepted", "failed"].includes(status)) {
+  if (direction === "sent" && ["sent", "accepted", "failed", "chunk_failed"].includes(status)) {
     window.__pendingFileProgress?.delete(id);
   }
 }
@@ -1843,7 +1854,6 @@ function createMessageElement(message, isSent) {
               } catch (e) {
                 const reason = getActionErrorMessage(e);
                 renderAndroidFileState?.(`OPEN_ERROR:${reason}`);
-                alert("打开失败: " + reason);
               }
             };
             fileContainer.setAttribute("role", "button");
@@ -1871,7 +1881,6 @@ function createMessageElement(message, isSent) {
               } catch (e) {
                 const reason = getActionErrorMessage(e);
                 renderAndroidFileState?.(`SHARE_ERROR:${reason}`);
-                alert("分享失败: " + reason);
               }
             });
             externalFileActionBtn = shareBtn;
@@ -2175,7 +2184,7 @@ function createMessageElement(message, isSent) {
   }
 
   if (message.msg_type === "file") {
-    const initialStatus = ["failed", "retrying"].includes(message.file_status) ? message.file_status :
+    const initialStatus = ["failed", "chunk_failed", "retrying"].includes(message.file_status) ? message.file_status :
       (message.status === "pending" ? "pending" : (message.file_status || "accepted"));
     renderFileTransfer(messageDiv, initialStatus, 0, message.file_size, 0, true);
     const pending = isSent && window.__pendingFileProgress?.get(String(message.id));
@@ -2183,7 +2192,7 @@ function createMessageElement(message, isSent) {
       renderFileTransfer(messageDiv, pending.status, pending.transferred, pending.total,
         pending.speedMbS, true);
     }
-    if (isSent && ["sent", "accepted", "failed"].includes(initialStatus)) {
+    if (isSent && ["sent", "accepted", "failed", "chunk_failed"].includes(initialStatus)) {
       window.__pendingFileProgress?.delete(String(message.id));
     }
   }
@@ -2407,7 +2416,7 @@ async function sendFileByPath(filePath, targetPeer = window.currentChatPeer) {
     // 纯洁地刷新
     await refreshCapturedChat(target, { forceLatest: true });
   } catch (e) {
-    alert("文件发送失败: " + e.message);
+    showFileSendFailure(e);
     await refreshCapturedChat(target);
   }
 }
@@ -2443,7 +2452,7 @@ async function sendFile(file, targetPeer = window.currentChatPeer) {
           await tauri.fs.remove(tempFilePath);
         } catch (e) {}
       } catch (e) {
-        alert("文件发送失败: " + e.message);
+        showFileSendFailure(e);
       }
     } else {
       try {
@@ -2455,7 +2464,7 @@ async function sendFile(file, targetPeer = window.currentChatPeer) {
         await refreshCapturedChat(target, { forceLatest: true });
       } catch (e) {
         console.error("[UI] 文件发送失败:", e);
-        alert("文件发送失败: " + e.message);
+        showFileSendFailure(e);
       }
     }
   } else {
@@ -2471,7 +2480,7 @@ async function sendFile(file, targetPeer = window.currentChatPeer) {
       await refreshCapturedChat(target, { forceLatest: true });
     } catch (e) {
       console.error("[UI] ✗ 文件发送失败:", e);
-      alert("文件发送失败: " + e.message);
+      showFileSendFailure(e);
       await refreshCapturedChat(target);
     }
   }
@@ -2679,7 +2688,7 @@ async function downloadFile(fileId, fileName) {
     );
   } catch (e) {
     console.error("[UI] 下载文件失败:", e);
-    alert("下载失败: " + e.message);
+    showMessageActionToast("下载失败：" + getActionErrorMessage(e), 4000);
   }
 }
 
@@ -2688,7 +2697,7 @@ async function openFileLocation(filePath) {
   const tauri = window.__TAURI__;
 
   if (!tauri) {
-    alert("此功能仅在桌面端支持");
+    showMessageActionToast("此功能仅在桌面端支持", 3000);
     return;
   }
 
@@ -2697,7 +2706,7 @@ async function openFileLocation(filePath) {
     console.log("[UI] ✓ 打开文件位置:", filePath);
   } catch (e) {
     console.error("[UI] 打开文件位置失败:", e);
-    alert("打开文件位置失败: " + e.message);
+    showMessageActionToast("打开文件位置失败：" + getActionErrorMessage(e), 4000);
   }
 }
 
@@ -2748,6 +2757,9 @@ function initSettings() {
   const backgroundReceiveSetting = document.getElementById("background-receive-setting");
   const backgroundReceiveStatus = document.getElementById("background-receive-status");
   const backgroundReceiveError = document.getElementById("background-receive-error");
+  const backgroundStopConfirm = document.getElementById("background-stop-confirm");
+  const backgroundStopOk = document.getElementById("background-stop-ok");
+  const backgroundStopCancel = document.getElementById("background-stop-cancel");
   const retryBackgroundServiceBtn = document.getElementById("retry-background-service-btn");
   const batteryOptimizationStatus = document.getElementById("battery-optimization-status");
   const openBatterySettingsBtn = document.getElementById("open-battery-settings-btn");
@@ -2761,6 +2773,7 @@ function initSettings() {
   const batteryAlertRepeatInput = document.getElementById("battery-alert-repeat-input");
   const batteryAlertLevelList = document.getElementById("battery-alert-level-list");
   const batteryAlertAddLevelBtn = document.getElementById("battery-alert-add-level-btn");
+  const batteryAlertNewLevel = document.getElementById("battery-alert-new-level");
   const batteryAlertValidation = document.getElementById("battery-alert-validation");
   let batteryAlertLevels = [50, 100];
 
@@ -2807,12 +2820,11 @@ function initSettings() {
       showBatteryAlertValidation("最多添加 10 个提醒电量");
       return;
     }
-    const value = prompt("请输入提醒电量（1～100）");
-    if (value === null) return;
-    const trimmed = value.trim();
+    const trimmed = batteryAlertNewLevel?.value.trim() || "";
     const level = Number(trimmed);
     if (!/^\d{1,3}$/.test(trimmed) || !Number.isInteger(level) || level < 1 || level > 100) {
       showBatteryAlertValidation("提醒电量必须是 1～100 的整数");
+      batteryAlertNewLevel?.focus();
       return;
     }
     if (batteryAlertLevels.includes(level)) {
@@ -2820,8 +2832,15 @@ function initSettings() {
       return;
     }
     batteryAlertLevels = [...batteryAlertLevels, level].sort((a, b) => a - b);
+    batteryAlertNewLevel.value = "";
     showBatteryAlertValidation();
     renderBatteryAlertLevels();
+  });
+  batteryAlertNewLevel?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      batteryAlertAddLevelBtn?.click();
+    }
   });
 
   // Android 端隐藏数据库路径配置
@@ -2968,9 +2987,16 @@ function initSettings() {
     });
     openBatterySettingsBtn?.addEventListener("click", () =>
       window.__TAURI__.core.invoke("open_battery_optimization_settings"));
-    backgroundReceiveStatus?.addEventListener("click", async () => {
-      if (stoppingBackground || backgroundReceiveStatus.disabled ||
-          !confirm("停止后台接收并退出 LQChat？")) return;
+    backgroundReceiveStatus?.addEventListener("click", () => {
+      if (stoppingBackground || backgroundReceiveStatus.disabled) return;
+      backgroundStopConfirm.hidden = false;
+    });
+    backgroundStopCancel?.addEventListener("click", () => {
+      backgroundStopConfirm.hidden = true;
+    });
+    backgroundStopOk?.addEventListener("click", async () => {
+      if (stoppingBackground) return;
+      backgroundStopConfirm.hidden = true;
       stoppingBackground = true;
       backgroundReceiveStatus.disabled = true;
       try {
@@ -3139,10 +3165,9 @@ function initSettings() {
         settingsErrorMsg.textContent = "选择路径失败: " + e.message;
       }
     } else {
-      const newPath = prompt("请输入下载路径:", downloadPathInput.value);
-      if (newPath) {
-        downloadPathInput.value = newPath;
-      }
+      settingsErrorMsg.textContent = "请在下载位置输入框中填写路径";
+      downloadPathInput.focus();
+      downloadPathInput.select();
     }
   });
 
@@ -3169,10 +3194,9 @@ function initSettings() {
         settingsErrorMsg.textContent = "选择路径失败: " + e.message;
       }
     } else {
-      const newPath = prompt("请输入数据库路径（目录）:", dbPathInput.value);
-      if (newPath) {
-        dbPathInput.value = newPath;
-      }
+      settingsErrorMsg.textContent = "请在数据库路径输入框中填写路径";
+      dbPathInput.focus();
+      dbPathInput.select();
     }
   });
 
@@ -3974,7 +3998,8 @@ function initDragAndDrop(chatContainer) {
     // 持久监听上传进度（覆盖 file_request 手动下载场景）
     tauri.event.listen("upload_progress", (event) => {
       const p = event.payload;
-      updateFileTransferById(p.sender_msg_id, p.transfer_status === "failed" ? "failed" : "uploading",
+      updateFileTransferById(p.sender_msg_id,
+        p.transfer_status === "chunk_failed" ? "chunk_failed" : p.transfer_status === "failed" ? "failed" : "uploading",
         p.transferred, p.total, p.speed_mb_s);
     });
   } else {
@@ -4433,7 +4458,7 @@ async function deleteSelectedMessages() {
   const selectedIds = Array.from(window.selectMode.selectedMessages);
 
   if (selectedIds.length === 0) {
-    alert("请先选择要删除的消息");
+    showMessageActionToast("请先选择要删除的消息");
     return;
   }
 
@@ -4471,7 +4496,7 @@ async function deleteSelectedMessages() {
     exitSelectMode();
   } catch (e) {
     console.error("[UI] 删除消息失败:", e);
-    alert("删除消息失败: " + e.message);
+    showMessageActionToast("删除消息失败：" + getActionErrorMessage(e), 4000);
   }
 }
 
@@ -4564,7 +4589,7 @@ function showConfirm(message, onOk) {
       await onOk(); // 这里才真正执行删除动作
     } catch (e) {
       console.error("执行失败:", e);
-      alert("操作失败: " + e.message);
+      showMessageActionToast("操作失败：" + getActionErrorMessage(e), 4000);
     } finally {
       closeConfirm(); // 无论成功失败,都关闭确认弹窗
     }

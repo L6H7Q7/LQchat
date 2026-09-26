@@ -466,7 +466,7 @@ async function handleShareToUser(userId, userName, userAddr, sharedFiles) {
       console.log("[JS-App] 文件发送成功:", fileInfo.fileName);
     } catch (e) {
       console.error("[JS-App] 文件发送失败:", fileInfo.fileName, e);
-      alert(`发送文件失败: ${fileInfo.fileName}\n${e.message}`);
+      showFileSendFailure(e, fileInfo.fileName);
     }
   }
 

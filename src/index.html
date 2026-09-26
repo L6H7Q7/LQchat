@@ -91,6 +91,11 @@
                             <span class="android-permission-copy"><strong>后台运行</strong></span>
                             <button id="background-receive-status" class="android-permission-status" type="button" disabled>正在检查…</button>
                             <div id="background-receive-error" class="setting-hint"></div>
+                            <div id="background-stop-confirm" class="background-stop-confirm" hidden>
+                                <span>停止后台接收并退出 LQChat？</span>
+                                <button id="background-stop-ok" type="button">确认退出</button>
+                                <button id="background-stop-cancel" type="button">取消</button>
+                            </div>
                             <div class="background-receive-actions" hidden>
                                 <button id="retry-background-service-btn" type="button" style="display: none;">重试</button>
                             </div>
@@ -137,6 +142,7 @@
                                         <button type="button" class="battery-alert-level-chip" data-level="50" aria-label="删除 50% 提醒">50% <span aria-hidden="true">×</span></button>
                                         <button type="button" class="battery-alert-level-chip" data-level="100" aria-label="删除 100% 提醒">100% <span aria-hidden="true">×</span></button>
                                     </div>
+                                    <input type="number" id="battery-alert-new-level" class="battery-alert-new-level no-spinner" inputmode="numeric" min="1" max="100" placeholder="1–100" aria-label="新增提醒电量">
                                     <button type="button" id="battery-alert-add-level-btn" class="battery-alert-add-level">＋添加</button>
                                 </div>
                                 <div id="battery-alert-validation" class="setting-hint battery-alert-validation" role="status"></div>
