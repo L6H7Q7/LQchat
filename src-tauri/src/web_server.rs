@@ -138,6 +138,7 @@ pub async fn run_server(
         .route("/api/send_message", post(send_message_http))
         .route("/api/chat_history/:peer_id", get(get_chat_history_http))
         .route("/api/upload", post(upload_file_http))
+        .route("/api/upload_progress", post(upload_progress_http))
         .route("/api/accept_file/:file_id", post(accept_file_http))
         .route("/api/download/:file_id", get(download_file_http))
         .route("/api/create_upload_record", post(create_upload_record_http))
@@ -1533,6 +1534,77 @@ async fn notify_receive_failure(state: &AppState, sender_id: &str, sender_msg_id
     state.event_bus.publish_message(event);
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct UploadProgressAck {
+    sender_msg_id: i64,
+    receiver_id: String,
+    received: u64,
+    total: u64,
+    speed_mb_s: f64,
+}
+
+// 接收端的块内进度走独立通道；发送端仍以 /api/upload 的成功响应作为分块完成确认。
+async fn upload_progress_http(
+    State(state): State<Arc<AppState>>,
+    Json(progress): Json<UploadProgressAck>,
+) -> impl IntoResponse {
+    if progress.total == 0 || progress.received > progress.total || !progress.speed_mb_s.is_finite() {
+        return StatusCode::BAD_REQUEST;
+    }
+    let record = sqlx::query_as::<_, (Option<String>, Option<i64>, Option<String>)>(
+        "SELECT receiver_id, file_size, file_status FROM messages \
+         WHERE id = ? AND sender_id = 'me' AND msg_type = 'file'",
+    )
+    .bind(progress.sender_msg_id)
+    .fetch_optional(&state.pool)
+    .await;
+    let Ok(Some((receiver_id, file_size, file_status))) = record else {
+        return StatusCode::NOT_FOUND;
+    };
+    if receiver_id.as_deref() != Some(progress.receiver_id.as_str())
+        || file_size != i64::try_from(progress.total).ok()
+        || !matches!(file_status.as_deref(), Some("uploading" | "retrying" | "offering"))
+    {
+        return StatusCode::CONFLICT;
+    }
+
+    // 接收中最多显示 99.x%；最终 100% 仍由最后一块的保存成功响应决定。
+    let acknowledged = progress.received.min(progress.total.saturating_sub(1));
+    let update = serde_json::json!({
+        "sender_msg_id": progress.sender_msg_id,
+        "transferred": acknowledged,
+        "total": progress.total,
+        "speed_mb_s": progress.speed_mb_s,
+    });
+    state.event_bus.publish(crate::core_events::CoreEvent::FileTransferProgress(update.clone()));
+    let mut browser_update = update;
+    browser_update["msg_type"] = serde_json::json!("file_upload_progress");
+    let _ = state.ws_broadcast.send(browser_update.to_string());
+    StatusCode::NO_CONTENT
+}
+
+async fn upload_progress_relay(
+    state: &AppState,
+    sender_id: &str,
+    sender_msg_id: &str,
+) -> Option<tokio::sync::mpsc::Sender<UploadProgressAck>> {
+    let sender_msg_id = sender_msg_id.parse::<i64>().ok()?;
+    let sender_addr = state.peer_manager.get_all_peers().into_iter()
+        .find(|peer| peer.id == sender_id && !peer.is_offline)?.addr;
+    let receiver_id = crate::db::get_user_id(&state.pool).await.ok()?;
+    let client = crate::network::lan_http_client(Some(std::time::Duration::from_secs(2))).ok()?;
+    let url = format!("http://{sender_addr}/api/upload_progress");
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<UploadProgressAck>(2);
+    tokio::spawn(async move {
+        while let Some(mut progress) = rx.recv().await {
+            progress.sender_msg_id = sender_msg_id;
+            progress.receiver_id = receiver_id.clone();
+            let _ = client.post(&url).json(&progress).send().await;
+        }
+    });
+    Some(tx)
+}
+
 async fn upload_file_http(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -1546,6 +1618,8 @@ async fn upload_file_http(
     let mut chunk_index: usize = 0;
     let mut chunk_total: usize = 0;
     let mut chunk_data: Option<Vec<u8>> = None;
+    // 第一块先落到独立 staging 文件；后续块可直接追加到已有的 .downloading 文件。
+    let mut streamed_chunk: Option<(std::path::PathBuf, u64, bool)> = None;
     let mut sender_msg_id = String::new();
     let mut speed_mb_s: f64 = 0.0;
 
@@ -1557,7 +1631,19 @@ async fn upload_file_http(
 
     // 解析 multipart 字段
     println!("[Web Server] 开始解析 multipart 字段");
-    while let Some(mut field) = multipart.next_field().await.ok().flatten() {
+    loop {
+        let mut field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(e) => {
+                if let Some((path, _, true)) = &streamed_chunk {
+                    let _ = fs::remove_file(path).await;
+                }
+                notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                return (StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse { error: format!("解析上传请求失败: {e}") })).into_response();
+            }
+        };
         let field_name = field.name().map(|s| s.to_string()).unwrap_or_default();
 
         match field_name.as_str() {
@@ -1601,16 +1687,117 @@ async fn upload_file_http(
                 }
             }
             "chunk" => {
-                // 读取分块数据
-                let mut data = Vec::new();
-                while let Ok(Some(chunk)) = field.chunk().await {
-                    data.extend_from_slice(&chunk);
+                let stream_path = if chunk_index == 0 && !file_name.is_empty() {
+                    let candidate = download_dir.join(&file_name);
+                    let downloading = download_dir.join(format!("{}.downloading", file_name));
+                    let already_exists = candidate.exists() && !downloading.exists()
+                        && fs::metadata(&candidate).await.map(|meta| meta.len() == file_size).unwrap_or(false);
+                    if already_exists { None } else {
+                        Some((download_dir.join(format!(".lqchat-{}.part", uuid::Uuid::new_v4())), true))
+                    }
+                } else if chunk_index > 0 {
+                    let target = if !sender_msg_id.is_empty() {
+                        crate::db::get_downloading_file_by_sender_msg_id(&state.pool, &sender_msg_id).await
+                    } else {
+                        crate::db::get_downloading_file(&state.pool, &sender_id).await
+                    };
+                    match target {
+                        Ok(Some(name)) => Some((download_dir.join(format!("{}.downloading", name)), false)),
+                        Ok(None) => None, // 旧版协议的秒传完成分支仍由下方处理。
+                        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse { error: format!("查询接收文件失败: {e}") })).into_response(),
+                    }
+                } else {
+                    None
+                };
+
+                if let Some((path, first_chunk)) = stream_path {
+                    let prior_bytes = if first_chunk { 0 } else {
+                        match fs::metadata(&path).await {
+                            Ok(meta) => meta.len(),
+                            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse { error: format!("读取临时文件失败: {e}") })).into_response(),
+                        }
+                    };
+                    let file = if first_chunk {
+                        fs::OpenOptions::new().create_new(true).write(true).open(&path).await
+                    } else {
+                        fs::OpenOptions::new().append(true).open(&path).await
+                    };
+                    let mut writer = match file {
+                        Ok(file) => file,
+                        Err(e) => {
+                            notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                            return (StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse { error: format!("打开临时文件失败: {e}") })).into_response();
+                        }
+                    };
+                    let relay = upload_progress_relay(&state, &sender_id, &sender_msg_id).await;
+                    let mut written = 0u64;
+                    let mut last_update = std::time::Instant::now() - std::time::Duration::from_millis(200);
+                    loop {
+                        let next = match field.chunk().await {
+                            Ok(next) => next,
+                            Err(e) => {
+                                if !first_chunk { let _ = writer.set_len(prior_bytes).await; }
+                                drop(writer);
+                                if first_chunk { let _ = fs::remove_file(&path).await; }
+                                notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                                return (StatusCode::BAD_REQUEST,
+                                    Json(ErrorResponse { error: format!("读取分块失败: {e}") })).into_response();
+                            }
+                        };
+                        let Some(bytes) = next else { break; };
+                        if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut writer, &bytes).await {
+                            if !first_chunk { let _ = writer.set_len(prior_bytes).await; }
+                            drop(writer);
+                            if first_chunk { let _ = fs::remove_file(&path).await; }
+                            notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                            return (StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse { error: format!("写入分块失败: {e}") })).into_response();
+                        }
+                        written += bytes.len() as u64;
+                        if last_update.elapsed() >= std::time::Duration::from_millis(150) {
+                            let received = prior_bytes + written;
+                            let speed = written as f64 / (1024.0 * 1024.0)
+                                / request_started.elapsed().as_secs_f64().max(0.001);
+                            let progress = serde_json::json!({
+                                "msg_type": "file_download_progress", "sender_msg_id": sender_msg_id,
+                                "received": received, "total": file_size, "speed_mb_s": speed,
+                            });
+                            let _ = state.ws_broadcast.send(progress.to_string());
+                            state.event_bus.publish_message(progress);
+                            if let Some(tx) = &relay {
+                                let _ = tx.try_send(UploadProgressAck {
+                                    sender_msg_id: 0, receiver_id: String::new(),
+                                    received, total: file_size, speed_mb_s: speed,
+                                });
+                            }
+                            last_update = std::time::Instant::now();
+                        }
+                    }
+                    if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut writer).await {
+                        if !first_chunk { let _ = writer.set_len(prior_bytes).await; }
+                        drop(writer);
+                        if first_chunk { let _ = fs::remove_file(&path).await; }
+                        notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse { error: format!("刷新分块失败: {e}") })).into_response();
+                    }
+                    streamed_chunk = Some((path, written, first_chunk));
+                } else {
+                    // 秒传兼容路径：读取但不写入新文件；解析错误不能误当成成功。
+                    let mut data = Vec::new();
+                    loop {
+                        match field.chunk().await {
+                            Ok(Some(bytes)) => data.extend_from_slice(&bytes),
+                            Ok(None) => break,
+                            Err(e) => return (StatusCode::BAD_REQUEST,
+                                Json(ErrorResponse { error: format!("读取分块失败: {e}") })).into_response(),
+                        }
+                    }
+                    chunk_data = Some(data);
                 }
-                chunk_data = Some(data);
-                println!(
-                    "[Web Server] 收到分块数据，大小: {} 字节",
-                    chunk_data.as_ref().map(|d| d.len()).unwrap_or(0)
-                );
             }
             _ => {
                 println!("[Web Server] 忽略未知字段: {}", field_name);
@@ -1625,10 +1812,10 @@ async fn upload_file_http(
         file_name,
         chunk_index,
         chunk_total,
-        chunk_data.is_some()
+        chunk_data.is_some() || streamed_chunk.is_some()
     );
 
-    if chunk_data.is_none() {
+    if chunk_data.is_none() && streamed_chunk.is_none() {
         eprintln!("[Web Server] ✗ 缺少 chunk 数据");
         return (
             StatusCode::BAD_REQUEST,
@@ -1650,7 +1837,22 @@ async fn upload_file_http(
             .into_response();
     }
 
-    let chunk_data = chunk_data.unwrap();
+    let chunk_data = chunk_data.unwrap_or_default();
+    let chunk_len = streamed_chunk.as_ref().map(|(_, len, _)| *len as usize).unwrap_or(chunk_data.len());
+    // 当前 10 MiB 协议必须完整收到每块；兼容旧客户端不同分块大小时仍按旧规则处理。
+    let standard_chunk = crate::network::messaging::FILE_TRANSFER_CHUNK_SIZE as u64;
+    let standard_total = file_size.saturating_add(standard_chunk - 1) / standard_chunk;
+    if file_size > 0 && chunk_total as u64 == standard_total {
+        let expected = standard_chunk.min(file_size.saturating_sub((chunk_index as u64).saturating_mul(standard_chunk)));
+        if chunk_index >= chunk_total || chunk_len as u64 != expected {
+            if let Some((path, _, true)) = &streamed_chunk {
+                let _ = fs::remove_file(path).await;
+            }
+            notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+            return (StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: "分块长度不完整".to_string() })).into_response();
+        }
+    }
 
     // ── 第一块：智能命名协商 ──────────────────────────────────────────────
     // 最终写入的文件名（可能因重命名而与 file_name 不同）
@@ -1686,6 +1888,9 @@ async fn upload_file_http(
 
             if existing_size == file_size {
                 // 大小完全相同 → 秒传：直接复用已有文件，写入数据库记录
+                if let Some((path, _, true)) = &streamed_chunk {
+                    let _ = fs::remove_file(path).await;
+                }
                 println!(
                     "[Web Server] ✓ 秒传命中: {:?} (大小相同: {} 字节)",
                     candidate, file_size
@@ -1939,57 +2144,49 @@ async fn upload_file_http(
     // 第一块：创建/截断临时文件（不触碰已有的完整文件）
     if chunk_index == 0 {
         println!("[Web Server] 创建临时文件: {:?}", temp_path);
-        // 清理可能残留的旧临时文件
-        let _ = tokio::fs::remove_file(&temp_path).await;
+        let _ = fs::remove_file(&temp_path).await;
     }
 
-    // 以追加模式写入临时文件
-    let file = match tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&temp_path)
-        .await
-    {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("[Web Server] ✗ 打开临时文件失败: {}", e);
+    if let Some((stream_path, _, first_chunk)) = &streamed_chunk {
+        if *first_chunk {
+            if let Err(e) = fs::rename(stream_path, &temp_path).await {
+                notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                return (StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: format!("移动接收分块失败: {e}") })).into_response();
+            }
+        } else if stream_path != &temp_path {
             notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("打开文件失败: {}", e),
-                }),
-            )
-                .into_response();
+            return (StatusCode::CONFLICT,
+                Json(ErrorResponse { error: "接收文件路径变化".to_string() })).into_response();
         }
-    };
-
-    let mut writer = tokio::io::BufWriter::new(file);
-
-    if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut writer, &chunk_data).await {
-        eprintln!("[Web Server] ✗ 写入文件失败: {}", e);
-        notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("写入文件失败: {}", e),
-            }),
-        )
-            .into_response();
-    }
-
-    if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut writer).await {
-        eprintln!("[Web Server] ✗ 刷新缓冲区失败: {}", e);
-        notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
-        return (StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: format!("刷新文件失败: {}", e) })).into_response();
+    } else {
+        // 秒传兼容路径才需要把内存中的块写入临时文件。
+        let file = match fs::OpenOptions::new().create(true).append(true).open(&temp_path).await {
+            Ok(file) => file,
+            Err(e) => {
+                notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+                return (StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: format!("打开文件失败: {e}") })).into_response();
+            }
+        };
+        let mut writer = tokio::io::BufWriter::new(file);
+        if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut writer, &chunk_data).await {
+            notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: format!("写入文件失败: {e}") })).into_response();
+        }
+        if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut writer).await {
+            notify_receive_failure(&state, &sender_id, &sender_msg_id).await;
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: format!("刷新文件失败: {e}") })).into_response();
+        }
     }
 
     println!(
         "[Web Server] ✓ 分块 {}/{} 已写入临时文件，大小: {} 字节",
         chunk_index + 1,
         chunk_total,
-        chunk_data.len()
+        chunk_len
     );
 
     // 第一块时创建/更新数据库记录，并广播初始消息给前端
@@ -2077,7 +2274,7 @@ async fn upload_file_http(
     // 广播接收端累计写入量。
     if !sender_msg_id.is_empty() {
         // 包含 multipart 接收和落盘耗时；首块也能显示实际吞吐。
-        let chunk_speed_mb_s = chunk_data.len() as f64
+        let chunk_speed_mb_s = chunk_len as f64
             / (1024.0 * 1024.0)
             / request_started.elapsed().as_secs_f64().max(0.001);
         let progress_msg = serde_json::json!({

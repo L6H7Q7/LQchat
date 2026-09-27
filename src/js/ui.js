@@ -1600,12 +1600,16 @@ function renderFileTransfer(msgEl, status, transferred, total, speedMbS = 0, for
   if (!statusEl || !progress) return;
   const isSent = msgEl.classList.contains("sent");
   const size = Math.max(0, Number(total ?? progress.dataset.total) || 0);
-  const bytes = Math.min(size || Number.MAX_SAFE_INTEGER, Math.max(0, Number(transferred) || 0));
+  const incomingBytes = Math.min(size || Number.MAX_SAFE_INTEGER, Math.max(0, Number(transferred) || 0));
+  const previousBytes = Number(progress.dataset.transferred || 0);
+  const bytes = status === progress.dataset.status && ["uploading", "downloading"].includes(status)
+    ? Math.max(previousBytes, incomingBytes) : incomingBytes;
   const percent = size ? Math.min(100, Math.floor(bytes * 100 / size)) : 0;
   const now = performance.now();
   if (!force && status === progress.dataset.status && now - Number(progress.dataset.updated || 0) < 150 && percent === Number(progress.dataset.percent || 0)) return;
   progress.dataset.updated = String(now);
   progress.dataset.percent = String(percent);
+  progress.dataset.transferred = String(bytes);
   progress.dataset.status = status;
   progress.dataset.total = String(size);
   statusEl.textContent = fileTransferLabel(status, isSent);
@@ -1627,18 +1631,28 @@ function updateFileTransferById(senderMsgId, status, transferred, total, speedMb
   if (senderMsgId === undefined || senderMsgId === null) return;
   const chat = document.getElementById("chat-messages");
   const id = String(senderMsgId);
+  if (direction === "sent") {
+    if (!window.__pendingFileProgress) window.__pendingFileProgress = new Map();
+    const previous = window.__pendingFileProgress.get(id);
+    if (status === "uploading" && previous?.status === "uploading") {
+      transferred = Math.max(Number(transferred) || 0, Number(previous.transferred) || 0);
+    }
+    if (["uploading", "retrying"].includes(status)) {
+      window.__pendingFileProgress.set(id, { status, transferred, total, speedMbS });
+    } else {
+      window.__pendingFileProgress.delete(id);
+    }
+  }
   const msgEl = [...(chat?.querySelectorAll(".message[data-sender-msg-id], .message[data-msg-id]") || [])]
     .find(el => el.classList.contains(direction) &&
       (el.dataset.senderMsgId === id || (direction === "sent" && el.dataset.msgId === id)));
-  if (!msgEl && direction === "sent") {
-    if (!window.__pendingFileProgress) window.__pendingFileProgress = new Map();
-    window.__pendingFileProgress.set(id, { status, transferred, total, speedMbS });
+  if (!msgEl) return;
+  const currentStatus = msgEl.querySelector(".file-transfer-progress")?.dataset.status;
+  if (status === "uploading" && ["sent", "accepted", "failed", "chunk_failed"].includes(currentStatus)) {
+    window.__pendingFileProgress?.delete(id);
     return;
   }
   renderFileTransfer(msgEl, status, transferred, total, speedMbS, force);
-  if (direction === "sent" && ["sent", "accepted", "failed", "chunk_failed"].includes(status)) {
-    window.__pendingFileProgress?.delete(id);
-  }
 }
 
 function createMessageElement(message, isSent) {
@@ -2219,6 +2233,13 @@ function onReceiveMessage(message) {
     const senderMsgId = message.sender_msg_id;
     updateFileTransferById(senderMsgId, message.received >= message.total ? "saving" : "downloading",
       message.received, message.total, message.speed_mb_s, false, "received");
+    return;
+  }
+
+  // 接收端回传的块内已写入字节数；原有分块响应仍负责最终确认。
+  if (message.msg_type === "file_upload_progress") {
+    updateFileTransferById(message.sender_msg_id, "uploading",
+      message.transferred, message.total, message.speed_mb_s);
     return;
   }
 

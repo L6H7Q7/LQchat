@@ -802,7 +802,7 @@ function startStreamingWebSocket() {
         if (data.msg_type === "start_upload") {
           // ── 接收端请求开始上传（手动下载） ──
           handleStartUpload(data);
-        } else if (data.msg_type === "file_status_update" || data.msg_type === "file_download_progress") {
+        } else if (["file_status_update", "file_download_progress", "file_upload_progress"].includes(data.msg_type)) {
           console.debug("[JS-App] 转发", data.msg_type, "到 onReceiveMessage");
           onReceiveMessage(data);
         } else if (data.stream_id || data.from_id) {
