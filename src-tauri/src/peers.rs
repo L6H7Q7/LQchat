@@ -9,6 +9,29 @@ use tokio_util::sync::CancellationToken;
 const PRESENCE_GRACE: Duration = Duration::from_secs(12);
 const PRESENCE_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
+async fn same_peer_reachable(client: &reqwest::Client, expected_id: &str, addr: &str) -> bool {
+    if addr.is_empty() {
+        return false;
+    }
+    let reported_id = match client.get(format!("http://{addr}/api/get_my_id")).send().await {
+        Ok(response) if response.status().is_success() => response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("id")?.as_str().map(str::to_owned)),
+        _ => None,
+    };
+    // 地址和端口可以被另一设备或重新安装的实例复用，不能只凭 TCP 通就判定旧 ID 在线。
+    // 旧版客户端若没有身份接口，仍保守地使用 TCP 探测。
+    match reported_id {
+        Some(id) => id == expected_id,
+        None => matches!(
+            tokio::time::timeout(PRESENCE_PROBE_TIMEOUT, tokio::net::TcpStream::connect(addr)).await,
+            Ok(Ok(_))
+        ),
+    }
+}
+
 #[derive(Clone)]
 struct StaleCandidate {
     id: String,
@@ -250,8 +273,7 @@ impl PeerManager {
             return;
         }
         if reachable {
-            // A TCP handshake to the peer's LQChat port proves that the app is
-            // still alive even if a few best-effort UDP broadcasts were lost.
+            // 身份匹配（或旧版客户端的 TCP 回退）证明该设备仍在线。
             peer.last_seen = now;
             return;
         }
@@ -381,26 +403,7 @@ impl PeerManager {
         for peer in candidates {
             let client = client.clone();
             probes.push(async move {
-                let reported_id = if peer.addr.is_empty() { None } else {
-                    match client.get(format!("http://{}/api/get_my_id", peer.addr)).send().await {
-                        Ok(response) if response.status().is_success() => response
-                            .json::<serde_json::Value>().await.ok()
-                            .and_then(|body| body.get("id")?.as_str().map(str::to_owned)),
-                        _ => None,
-                    }
-                };
-                // 同一个地址可能已被另一台（或重装后的）设备占用；必须比较设备 ID。
-                // 无法读取 ID 时保守地沿用 TCP 探测，避免误删仍在线的旧版客户端。
-                let same_device_reachable = match reported_id {
-                    Some(id) => id == peer.id,
-                    None => !peer.addr.is_empty() && matches!(
-                        tokio::time::timeout(
-                            PRESENCE_PROBE_TIMEOUT,
-                            tokio::net::TcpStream::connect(&peer.addr),
-                        ).await,
-                        Ok(Ok(_))
-                    ),
-                };
+                let same_device_reachable = same_peer_reachable(&client, &peer.id, &peer.addr).await;
                 (peer.id, same_device_reachable)
             });
         }
@@ -440,6 +443,7 @@ pub async fn run_presence_monitor(
 ) -> Result<(), String> {
     use futures_util::{stream::FuturesUnordered, StreamExt};
 
+    let client = crate::network::lan_http_client(Some(PRESENCE_PROBE_TIMEOUT))?;
     let mut interval = tokio::time::interval(Duration::from_secs(2));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -450,15 +454,9 @@ pub async fn run_presence_monitor(
 
         let mut probes = FuturesUnordered::new();
         for candidate in manager.stale_candidates() {
+            let client = client.clone();
             probes.push(async move {
-                let reachable = matches!(
-                    tokio::time::timeout(
-                        PRESENCE_PROBE_TIMEOUT,
-                        tokio::net::TcpStream::connect(&candidate.addr),
-                    )
-                    .await,
-                    Ok(Ok(_))
-                );
+                let reachable = same_peer_reachable(&client, &candidate.id, &candidate.addr).await;
                 (candidate, reachable)
             });
         }
@@ -541,5 +539,30 @@ mod presence_tests {
             manager.observe_discovery("peer".into(), "对端".into(), "127.0.0.1:8888".into(), 128,),
             Some(PeerConnectionTransition::Reconnected),
         );
+    }
+
+    #[tokio::test]
+    async fn reused_address_only_keeps_matching_device_online() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let router = axum::Router::new().route("/api/get_my_id", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({ "id": "current" }))
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let manager = PeerManager::new();
+        manager.observe_discovery("old".into(), "4060".into(), addr.clone(), 128);
+        manager.observe_discovery("current".into(), "4060".into(), addr, 128);
+        for peer in manager.peers.write().unwrap().values_mut() {
+            peer.last_seen -= 20;
+        }
+
+        let client = crate::network::lan_http_client(Some(PRESENCE_PROBE_TIMEOUT)).unwrap();
+        for candidate in manager.stale_candidates() {
+            let reachable = same_peer_reachable(&client, &candidate.id, &candidate.addr).await;
+            manager.complete_presence_probe(&candidate, reachable);
+        }
+        assert!(manager.peers.read().unwrap()["old"].is_offline);
+        assert!(!manager.peers.read().unwrap()["current"].is_offline);
+        server.abort();
     }
 }

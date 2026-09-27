@@ -345,18 +345,6 @@ body.android-app .android-list-actions {
   gap: 9px;
 }
 
-body.android-app .android-clear-peers-btn {
-  min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--android-line);
-  border-radius: 14px;
-  color: var(--android-purple);
-  background: var(--android-card);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 body.android-app .android-add-btn {
   min-height: 44px;
   display: inline-flex;

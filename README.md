@@ -3,7 +3,7 @@
 
 > Private LAN messaging, file transfer, and Android notification relay for Windows and Android. No account or cloud service required.
 >
-> 📖 [中文说明](README_CN.md) · [Download v11.3](https://github.com/acclt/LQchat/releases/latest)
+> 📖 [中文说明](README_CN.md) · [Download v11.4](https://github.com/acclt/LQchat/releases/latest)
 
 <p align="center">
   <img src="artifacts/0.2/device/windows-build1022-wide.jpg" width="68%" alt="LQChat Windows interface" />

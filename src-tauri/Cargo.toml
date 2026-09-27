@@ -1,6 +1,6 @@
 [package]
 name = "lanchat"
-version = "11.3.0"
+version = "11.4.0"
 edition = "2021"
 default-run = "LQChat"
 
