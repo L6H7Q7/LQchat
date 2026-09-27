@@ -345,7 +345,7 @@ body.android-app .android-list-actions {
   gap: 9px;
 }
 
-body.android-app .android-add-btn {
+body.android-app .android-clear-offline-btn {
   min-height: 44px;
   display: inline-flex;
   align-items: center;
@@ -1673,10 +1673,36 @@ body.android-app .android-save-bar .success-msg:not(.show) {
     grid-row: 1;
   }
 
-  body.android-app .android-list-actions .android-add-btn {
+  body.android-app .android-list-actions .android-clear-offline-btn {
     grid-column: 1 / -1;
     grid-row: 2;
     justify-self: end;
+  }
+
+  body.android-app .android-chat-card .android-list-toolbar {
+    grid-template-columns: minmax(0, 1fr) 42px auto;
+    gap: 8px;
+  }
+
+  body.android-app .android-chat-card .android-count-label {
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  body.android-app .android-chat-card .android-icon-btn {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+  }
+
+  body.android-app .android-chat-card .android-clear-offline-btn {
+    grid-column: 3;
+    grid-row: 1;
+    min-height: 42px;
+    padding: 0 10px;
+    white-space: nowrap;
   }
 
   body.android-app .android-inline-setting {

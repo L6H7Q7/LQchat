@@ -13,9 +13,9 @@ val tauriProperties = Properties().apply {
     }
 }
 
-// Android 独立版本号：不跟随桌面端的 Tauri/Cargo 版本。
-val lanchatAndroidVersionName = "12.2"
-val lanchatAndroidVersionCode = 1112
+// 正式发布与 Windows 使用同一主版本；GitHub 标签使用整数序号。
+val lanchatAndroidVersionName = "16.0"
+val lanchatAndroidVersionCode = 1600
 // Opt-in device contract tests must not replace the user's installed application or its data.
 val lanchatAcceptanceBuild = providers.gradleProperty("lanchatAcceptance").orNull == "true"
 
