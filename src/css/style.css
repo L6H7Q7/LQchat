@@ -1593,7 +1593,6 @@ body.android-app .android-attachment-panel.open {
 }
 
 #save-name-btn,
-#save-settings-btn,
 #save-peer-btn,
 #apply-theme-btn {
 	flex: 1;
@@ -1615,7 +1614,6 @@ body.android-app .android-attachment-panel.open {
 }
 
 #cancel-name-btn,
-#cancel-settings-btn,
 #cancel-peer-btn,
 #cancel-theme-btn {
 	flex: 1;
@@ -1637,7 +1635,6 @@ body.android-app .android-attachment-panel.open {
 }
 
 #cancel-name-btn:hover,
-#cancel-settings-btn:hover,
 #cancel-peer-btn:hover,
 #cancel-theme-btn:hover {
 	background: rgba(255, 255, 255, 0.05);
@@ -3301,7 +3298,6 @@ body.android-app #custom-peer-input:focus {
 }
 
 body.android-app #cancel-name-btn,
-body.android-app #cancel-settings-btn,
 body.android-app #cancel-peer-btn,
 body.android-app #cancel-theme-btn {
 	background: #f3f4f8 !important;

@@ -822,21 +822,18 @@ body {
 
 /* 确定/保存按钮 (蓝色) */
 #save-name-btn,
-#save-settings-btn,
 #apply-theme-btn {
 	background: #007acc;
 	color: white;
 }
 
 #save-name-btn:hover,
-#save-settings-btn:hover,
 #apply-theme-btn:hover {
 	background: #0062a3;
 }
 
 /* 取消/普通按钮 (深灰) */
 #cancel-name-btn,
-#cancel-settings-btn,
 #cancel-theme-btn,
 #choose-path-btn {
 	background: #3c3c3c;
@@ -844,7 +841,6 @@ body {
 }
 
 #cancel-name-btn:hover,
-#cancel-settings-btn:hover,
 #cancel-theme-btn:hover,
 #choose-path-btn:hover {
 	background: #4b4b4b;

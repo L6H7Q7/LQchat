@@ -16,8 +16,8 @@ window.NotificationUI = (() => {
   let detailSignature = "";
   let info = {},
     dialog,
+    pushDetailsDialog,
     appDialog,
-    lqPushDialog,
     pushSourcesPanel,
     receiveDialog,
     panel,
@@ -31,12 +31,14 @@ window.NotificationUI = (() => {
     appLoading = false,
     appCategory = "all";
   let accessRefresh = null;
+  let pendingAccessAuthorization = false;
 
   function renderNotificationAccess() {
-    const button = document.getElementById("android-notification-access-btn");
-    if (!button) return;
-    button.textContent = info.access ? "已授权" : "去授权";
-    button.classList.toggle("is-authorized", !!info.access);
+    const toggle = document.getElementById("android-notification-access-toggle");
+    if (toggle) {
+      toggle.checked = !!info.access;
+      toggle.disabled = false;
+    }
   }
 
   function refreshNotificationAccess() {
@@ -46,8 +48,16 @@ window.NotificationUI = (() => {
     accessRefresh = (async () => {
       try {
         const latest = await invoke("notification_settings");
+        const wasGranted = !!info.access;
         info.access = latest.access;
         renderNotificationAccess();
+        if (pendingAccessAuthorization || wasGranted !== !!info.access) {
+          pendingAccessAuthorization = false;
+          if (wasGranted !== !!info.access) {
+            await save({ ...config, push_enabled: !!info.access, lq_battery_push_enabled: !!info.access }, pushDetailsDialog);
+            renderSettings();
+          }
+        }
       } catch (error) {
         console.warn("[NotificationSync] 权限状态刷新失败", getErrorMessage(error));
       } finally {
@@ -439,6 +449,9 @@ window.NotificationUI = (() => {
     input.addEventListener("change", () => action(input));
     control.append(input, slider);
     row.append(label, control);
+    row.addEventListener("click", (event) => {
+      if (!control.contains(event.target) && !input.disabled) input.click();
+    });
     return row;
   }
   async function save(next, surface = dialog) {
@@ -453,17 +466,18 @@ window.NotificationUI = (() => {
     try {
       info = await invoke("notification_settings", { settings: next });
       config = info.settings;
-      if (surface === lqPushDialog) renderSettings();
-      hint.textContent = "已保存";
+      hint.textContent = android ? "" : "已保存";
       if (appDialog?.open)
-        appDialog.querySelector(".ns-save-status").textContent = "已保存";
+        appDialog.querySelector(".ns-save-status").textContent = android ? "" : "已保存";
       renderDevices();
+      if (android) window.showMessageActionToast?.("设置完成✅", 1000);
       return true;
     } catch (e) {
       hint.textContent = `保存失败：${getErrorMessage(e)}`;
       if (appDialog?.open)
         appDialog.querySelector(".ns-save-status").textContent =
           hint.textContent;
+      if (android) window.showMessageActionToast?.("设置失败❌", 1000);
       return false;
     } finally {
       busy = false;
@@ -482,7 +496,12 @@ window.NotificationUI = (() => {
     try {
       await invoke("notification_action", { action });
     } catch (e) {
-      surface.querySelector(".ns-save-status").textContent = getErrorMessage(e);
+      const message = getErrorMessage(e);
+      surface.querySelector(".ns-save-status").textContent = message;
+      if (android && action === "access") {
+        pendingAccessAuthorization = false;
+        window.showMessageActionToast?.("设置失败❌", 1000);
+      }
     }
   }
   function filteredApps() {
@@ -573,6 +592,7 @@ window.NotificationUI = (() => {
     if (location.hash !== "#push-apps")
       history.pushState({ pushApps: true }, "", "#push-apps");
     try {
+      await window.AndroidAppLoading.show("push-apps");
       const result = await invoke("notification_action", { action: "apps" });
       appOptions = result.apps || [];
       appSelection = new Set(config.allowed_packages);
@@ -581,33 +601,14 @@ window.NotificationUI = (() => {
     } catch (e) {
       empty.hidden = false;
       empty.textContent = getErrorMessage(e);
+    } finally {
+      appLoading = false;
+      window.AndroidAppLoading.hide("push-apps");
     }
   }
   function closeAppPicker() {
+    window.AndroidAppLoading?.hide("push-apps");
     appDialog?.classList.remove("is-open");
-  }
-  function renderLqPushSettings() {
-    if (!lqPushDialog) return;
-    const content = lqPushDialog.querySelector(".ns-settings-content");
-    content.replaceChildren(
-      toggleRow("电量提醒", config.lq_battery_push_enabled, async (input) => {
-        if (!(await save({ ...config, lq_battery_push_enabled: input.checked }, lqPushDialog)))
-          input.checked = !input.checked;
-      }),
-      el("p", "ns-hint", "开启后，本机按自定义规则产生的电量提醒会推送给已选择的设备；同时需要开启信息推送。"),
-    );
-  }
-  function openLqPushSettings() {
-    if (!lqPushDialog || busy) return;
-    renderLqPushSettings();
-    lqPushDialog.classList.add("is-open");
-    lqPushDialog.scrollTop = 0;
-    lqPushDialog.querySelector(".ns-save-status").textContent = "";
-    if (location.hash !== "#lq-push")
-      history.pushState({ lqPush: true }, "", "#lq-push");
-  }
-  function closeLqPushSettings() {
-    lqPushDialog?.classList.remove("is-open");
   }
   async function saveAppPicker() {
     if (!appDialog || busy || appLoading) return;
@@ -627,15 +628,15 @@ window.NotificationUI = (() => {
       info = { ...info, ...result };
       config = result.settings || config;
       renderSettings();
-      status.textContent = "已保存";
-      showMessageActionToast("保存成功", 2400);
+      status.textContent = "";
+      showMessageActionToast("设置完成✅", 1000);
       if (appDialog.classList.contains("is-open")) {
         closeAppPicker();
         if (location.hash === "#push-apps") history.back();
       }
     } catch (e) {
       status.textContent = `保存失败：${getErrorMessage(e)}`;
-      showMessageActionToast(status.textContent, 4000);
+      showMessageActionToast("设置失败❌", 1000);
     } finally {
       busy = false;
       updateAppSelectionControls();
@@ -653,7 +654,7 @@ window.NotificationUI = (() => {
     content.replaceChildren();
     if (showHeading) content.append(el("h3", "", "信息接收"));
     content.append(
-      checkRow(
+      (android ? toggleRow : checkRow)(
         "允许接收其他设备推送",
         config.receive_enabled,
         async (input) => {
@@ -677,35 +678,28 @@ window.NotificationUI = (() => {
       ),
     );
   }
-  function renderSettings() {
-    const content = dialog.querySelector(".ns-settings-content");
+  function renderPushDetails() {
+    if (!pushDetailsDialog) return;
+    const content = pushDetailsDialog.querySelector(".ns-settings-content");
     content.replaceChildren();
-    if (android) {
-      const heading = el("div", "ns-push-heading", "信息推送");
-      const panel = el("section", "ns-push-panel");
-      panel.append(
-        toggleRow("启用信息推送", config.push_enabled, async (input) => {
-          if (!(await save({ ...config, push_enabled: input.checked })))
-            input.checked = !input.checked;
-        }),
-      );
       const choices = el("div", "ns-target-options");
-      const ids = [
-        ...new Set([...peers.map((p) => p.id), ...config.target_device_ids]),
-      ].filter((id) => id !== localId);
+      const ids = peers
+        .filter((peer) => peer.id !== localId && !peer.is_offline && peer.notification_receive_enabled === true)
+        .map((peer) => peer.id);
       for (const id of ids) {
         const p = peerFor(id);
-        const row = checkRow(
+        const row = toggleRow(
           "",
           config.target_device_ids.includes(id),
           async (input) => {
             if (
-              !(await save(updateSet("target_device_ids", id, input.checked)))
+              !(await save(updateSet("target_device_ids", id, input.checked), pushDetailsDialog))
             )
               input.checked = !input.checked;
           },
         );
-        const copy = row.querySelector("span");
+        const copy = row.firstElementChild;
+        row.querySelector("input").setAttribute("aria-label", `向 ${nameFor(id)} 推送通知`);
         copy.className = "ns-target-copy";
         copy.append(
           el("strong", "", nameFor(id)),
@@ -715,7 +709,7 @@ window.NotificationUI = (() => {
       }
       if (!ids.length)
         choices.append(
-          el("p", "ns-hint", "尚未发现其他设备。请先启动对方的 LQChat。"),
+          el("p", "ns-hint", "暂无已开启“允许接收其他设备推送”的在线设备。"),
         );
       const appPickerRow = button("", chooseApps, "ns-app-picker-row");
       appPickerRow.append(
@@ -726,32 +720,34 @@ window.NotificationUI = (() => {
           `已选 ${config.allowed_packages.length} 个`,
         ),
       );
-      const lqPushRow = button("", openLqPushSettings, "ns-app-picker-row");
-      lqPushRow.id = "android-lq-push-settings-btn";
-      lqPushRow.append(
-        el("strong", "", "lq推送管理"),
-        el("span", "ns-app-picker-summary", config.lq_battery_push_enabled ? "电量提醒已开启" : "电量提醒已关闭"),
-      );
-      panel.append(
+      content.append(
+        toggleRow("应用信息推送", config.push_enabled, async (input) => {
+          if (!(await save({ ...config, push_enabled: input.checked }, pushDetailsDialog)))
+            input.checked = !input.checked;
+        }),
         choices,
         appPickerRow,
-        lqPushRow,
+        toggleRow("电量推送到其他设备", config.lq_battery_push_enabled, async (input) => {
+          if (!(await save({ ...config, lq_battery_push_enabled: input.checked }, pushDetailsDialog)))
+            input.checked = !input.checked;
+        }),
         button("发送测试通知", async (event) => {
           const b = event.currentTarget;
-          const hint = dialog.querySelector(".ns-save-status");
+          const hint = pushDetailsDialog.querySelector(".ns-save-status");
+          const availableTargets = ids.filter((id) => config.target_device_ids.includes(id));
           if (!config.push_enabled) {
             hint.textContent = "请先启用信息推送";
             return;
           }
-          if (!config.target_device_ids.length) {
-            hint.textContent = "请至少选择一台推送设备";
+          if (!availableTargets.length) {
+            hint.textContent = "请至少选择一台已开启接收的在线设备";
             return;
           }
           b.disabled = true;
           hint.textContent = "正在发送测试通知…";
           try {
             await invoke("notification_test");
-            hint.textContent = `测试通知已发送到 ${config.target_device_ids.length} 台设备`;
+            hint.textContent = `测试通知已发送到 ${availableTargets.length} 台设备`;
             await refreshRecords();
           } catch (e) {
             hint.textContent = getErrorMessage(e);
@@ -760,7 +756,24 @@ window.NotificationUI = (() => {
           }
         }, "ns-test-button"),
       );
-      content.append(heading, panel);
+  }
+  function openPushDetails() {
+    if (!pushDetailsDialog || busy) return;
+    renderPushDetails();
+    pushDetailsDialog.classList.add("is-open");
+    pushDetailsDialog.scrollTop = 0;
+    pushDetailsDialog.querySelector(".ns-save-status").textContent = "";
+    if (location.hash !== "#push-details")
+      history.pushState({ pushDetails: true }, "", "#push-details");
+  }
+  function closePushDetails() {
+    pushDetailsDialog?.classList.remove("is-open");
+  }
+  function renderSettings() {
+    const content = dialog.querySelector(".ns-settings-content");
+    content.replaceChildren();
+    if (android) {
+      if (pushDetailsDialog?.classList.contains("is-open")) renderPushDetails();
       renderNotificationAccess();
       const receiveToggle = document.getElementById("android-receive-toggle");
       if (receiveToggle) receiveToggle.checked = config.receive_enabled;
@@ -894,8 +907,8 @@ window.NotificationUI = (() => {
     }).observe(panel.querySelector(".ns-cards"));
     if (android) {
       dialog = document.getElementById("android-notification-settings");
+      pushDetailsDialog = document.getElementById("android-push-details-panel");
       appDialog = document.getElementById("android-push-apps-panel");
-      lqPushDialog = document.getElementById("android-lq-push-panel");
       pushSourcesPanel = document.getElementById("android-push-sources-panel");
       receiveDialog = document.getElementById("android-receive-settings-panel");
       dialog.replaceChildren(
@@ -911,19 +924,29 @@ window.NotificationUI = (() => {
             input.checked = !input.checked;
         });
       document
-        .getElementById("android-notification-access-btn")
-        ?.addEventListener("click", () => systemAction("access"));
+        .getElementById("android-notification-access-toggle")
+        ?.addEventListener("change", (event) => {
+          event.currentTarget.checked = !!info.access;
+          pendingAccessAuthorization = true;
+          void systemAction("access");
+        });
+      const pushEntry = document.getElementById("android-push-settings-btn");
+      pushEntry?.addEventListener("click", openPushDetails);
+      pushEntry?.closest(".android-permission-row")?.addEventListener("click", (event) => {
+        if (pushEntry.contains(event.target) || event.target.closest(".toggle-switch")) return;
+        pushEntry.click();
+      });
+      document
+        .getElementById("android-push-details-back-btn")
+        ?.addEventListener("click", () => {
+          if (location.hash === "#push-details") history.back();
+          else closePushDetails();
+        });
       document
         .getElementById("android-push-apps-back-btn")
         ?.addEventListener("click", () => {
           if (location.hash === "#push-apps") history.back();
           else closeAppPicker();
-        });
-      document
-        .getElementById("android-lq-push-back-btn")
-        ?.addEventListener("click", () => {
-          if (location.hash === "#lq-push") history.back();
-          else closeLqPushSettings();
         });
       document
         .getElementById("android-push-apps-save-btn")
@@ -971,8 +994,8 @@ window.NotificationUI = (() => {
       document.body.append(dialog);
       const receiveSettingsButton = button("信息接收设置", openSettings);
       receiveSettingsButton.classList.add("desktop-receive-settings");
-      const saveBar = document.querySelector("#settings-panel > .settings-content > .android-save-bar");
-      if (saveBar) saveBar.before(receiveSettingsButton);
+      const status = document.querySelector("#settings-panel > .settings-content > .settings-auto-status");
+      if (status) status.before(receiveSettingsButton);
       else document.querySelector("#settings-panel .settings-content")?.append(receiveSettingsButton);
       if (!document.querySelector("#settings-panel .ns-button"))
         document
@@ -980,11 +1003,11 @@ window.NotificationUI = (() => {
           ?.append(button("信息接收设置", openSettings));
     }
     window.addEventListener("popstate", () => {
-      const inSettings = android && ["#settings", "#permissions", "#push-apps", "#lq-push"].includes(location.hash);
+      const inSettings = android && ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#background-options", "#download-options"].includes(location.hash);
       const inReceiveSettings = android && location.hash === "#receive-settings";
       if (!inSettings && !inReceiveSettings && location.hash !== "#notifications") leave();
       if (location.hash !== "#push-apps") closeAppPicker();
-      if (location.hash !== "#lq-push") closeLqPushSettings();
+      if (!["#push-details", "#push-apps"].includes(location.hash)) closePushDetails();
       if (location.hash !== "#push-sources") closePushSources();
       if (!inReceiveSettings) closeReceiveSettings();
     });
@@ -1016,7 +1039,12 @@ window.NotificationUI = (() => {
   }
   function onPeers(value) {
     if (!enabled) return;
+    const previousTargets = peers.filter((peer) => !peer.is_offline && peer.notification_receive_enabled === true)
+      .map((peer) => `${peer.id}:${peer.name}:${peer.addr}`).sort().join("|");
     peers = value.filter((p) => p.id !== localId);
+    const nextTargets = peers.filter((peer) => !peer.is_offline && peer.notification_receive_enabled === true)
+      .map((peer) => `${peer.id}:${peer.name}:${peer.addr}`).sort().join("|");
+    if (android && dialog && !busy && previousTargets !== nextTargets) renderSettings();
     renderDevices();
   }
   async function refreshSettings() {
@@ -1025,6 +1053,14 @@ window.NotificationUI = (() => {
     config = info.settings;
     renderSettings();
     renderDevices();
+  }
+  async function setReceiveEnabled(enabled) {
+    if (!android || !dialog) return false;
+    if (config.receive_enabled === enabled) return true;
+    const saved = await save({ ...config, receive_enabled: enabled }, dialog);
+    const toggle = document.getElementById("android-receive-toggle");
+    if (toggle) toggle.checked = config.receive_enabled;
+    return saved;
   }
   async function refresh() {
     if (!enabled) return;
@@ -1041,6 +1077,7 @@ window.NotificationUI = (() => {
     open,
     openPushSources,
     refreshSettings,
+    setReceiveEnabled,
     refresh,
   };
 })();

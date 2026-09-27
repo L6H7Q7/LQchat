@@ -72,6 +72,8 @@ pub struct Peer {
     #[serde(default)]
     pub notification_push_enabled: bool,
     #[serde(default)]
+    pub notification_receive_enabled: bool,
+    #[serde(default)]
     pub notification_push_target_device_ids: Vec<String>,
 }
 
@@ -123,6 +125,7 @@ impl PeerManager {
                 is_offline,
                 available_memory_mb,
                 notification_push_enabled: false,
+                notification_receive_enabled: false,
                 notification_push_target_device_ids: Vec::new(),
             };
             peers.insert(id, peer);
@@ -199,6 +202,7 @@ impl PeerManager {
                 is_offline: false,
                 available_memory_mb,
                 notification_push_enabled: false,
+                notification_receive_enabled: false,
                 notification_push_target_device_ids: Vec::new(),
             };
             println!(
@@ -214,10 +218,12 @@ impl PeerManager {
         &self,
         id: &str,
         enabled: bool,
+        receive_enabled: bool,
         target_device_ids: Vec<String>,
     ) {
         if let Some(peer) = self.peers.write().unwrap().get_mut(id) {
             peer.notification_push_enabled = enabled;
+            peer.notification_receive_enabled = receive_enabled;
             peer.notification_push_target_device_ids = target_device_ids;
         }
     }

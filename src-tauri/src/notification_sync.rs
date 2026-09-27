@@ -51,11 +51,14 @@ pub struct Settings {
     pub target_device_ids: Vec<String>,
 }
 
+#[cfg(target_os = "android")]
 const DISCOVERY_PRESENCE_KEY: &str = "notification_sync_discovery_presence";
 
+#[cfg(target_os = "android")]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct DiscoveryPresence {
     enabled: bool,
+    receive_enabled: bool,
     target_device_ids: Vec<String>,
 }
 
@@ -75,6 +78,7 @@ async fn persist_discovery_presence(
 ) -> Result<(), String> {
     let presence = DiscoveryPresence {
         enabled: settings.push_enabled,
+        receive_enabled: settings.receive_enabled,
         target_device_ids: settings
             .target_device_ids
             .iter()
@@ -93,17 +97,25 @@ async fn persist_discovery_presence(
     Ok(())
 }
 
-pub async fn discovery_presence(pool: &sqlx::Pool<sqlx::Sqlite>) -> (bool, Vec<String>) {
-    let value = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
-        .bind(DISCOVERY_PRESENCE_KEY)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-    let presence = value
-        .and_then(|value| serde_json::from_str::<DiscoveryPresence>(&value).ok())
-        .unwrap_or_default();
-    (presence.enabled, presence.target_device_ids)
+pub async fn discovery_presence(pool: &sqlx::Pool<sqlx::Sqlite>) -> (bool, bool, Vec<String>) {
+    #[cfg(not(target_os = "android"))]
+    {
+        return (false, receive_enabled(pool).await, Vec::new());
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let value = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
+            .bind(DISCOVERY_PRESENCE_KEY)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+        let presence = value
+            .and_then(|value| serde_json::from_str::<DiscoveryPresence>(&value).ok())
+            .unwrap_or_default();
+        (presence.enabled, presence.receive_enabled, presence.target_device_ids)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -415,6 +427,9 @@ pub async fn send(mut message: Notification, settings: Settings) -> Result<(), S
             continue;
         }
         let peer = peers.get_all_peers().into_iter().find(|p| p.id == target);
+        if peer.as_ref().is_some_and(|peer| !peer.notification_receive_enabled) {
+            continue;
+        }
         let mut entry = Record {
             record_id: String::new(),
             peer_id: target.clone(),
@@ -649,6 +664,21 @@ pub async fn notification_test() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "android"))]
+    #[tokio::test]
+    async fn discovery_presence_advertises_windows_receive_setting() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(discovery_presence(&pool).await, (false, false, Vec::new()));
+        sqlx::query("INSERT INTO settings (key, value) VALUES ('notification_sync_receive', 'true')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(discovery_presence(&pool).await, (false, true, Vec::new()));
+    }
     pub fn sample() -> Notification {
         Notification {
             msg_type: "notification".into(),
@@ -715,6 +745,7 @@ mod tests {
             is_offline: true,
             available_memory_mb: 100,
             notification_push_enabled: true,
+            notification_receive_enabled: true,
             notification_push_target_device_ids: vec!["local".into()],
         }];
         let snapshot = route_status_snapshot("local", peers);

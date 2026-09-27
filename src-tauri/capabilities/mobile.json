@@ -25,6 +25,8 @@
     "allow-clear-notification",
     "allow-get-notifications-enabled",
     "allow-set-notifications-enabled",
+    "allow-get-notification-sound-enabled",
+    "allow-set-notification-sound-enabled",
     "allow-notification-settings",
     "allow-notification-records",
     "allow-notification-action",

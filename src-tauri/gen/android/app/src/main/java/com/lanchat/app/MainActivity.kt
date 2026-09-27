@@ -1,6 +1,7 @@
 package com.lanchat.app
 
 import android.app.ActivityManager
+import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
@@ -262,10 +263,11 @@ class MainActivity : TauriActivity() {
 
     @Keep
     fun getNotificationPermissionState(): String {
-        return if (Build.VERSION.SDK_INT < 33 ||
+        val notificationsEnabled = getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        val runtimePermissionGranted = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) "granted" else "denied"
+        return if (notificationsEnabled && runtimePermissionGranted) "granted" else "denied"
     }
 
     /**

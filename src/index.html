@@ -27,13 +27,10 @@
                 <span></span>
             </header>
             <h3 class="desktop-settings-title" data-i18n="settings">设置</h3>
+            <button id="settings-close-btn" class="desktop-only settings-close-btn" type="button" aria-label="关闭设置">×</button>
             <div class="settings-content">
                 <section class="android-settings-card">
-                    <div class="setting-item android-inline-setting android-only">
-                        <label for="settings-device-name-input">设备名称</label>
-                        <input type="text" id="settings-device-name-input" maxlength="50" autocomplete="off">
-                    </div>
-                    <div class="setting-item android-inline-setting">
+                    <div class="setting-item android-inline-setting" id="port-setting">
                         <label for="port-input">监听端口</label>
                         <div class="path-input-group">
                             <input type="number" id="port-input" class="no-spinner" placeholder="8888" min="1" max="65535">
@@ -56,126 +53,32 @@
                             </button>
                         </div>
                     </div>
-                    <button id="android-download-location-btn" class="android-inline-setting android-download-row android-only" type="button" aria-label="选择下载位置">
-                        <span class="android-download-label">下载位置</span>
-                        <span class="android-download-value-group">
-                            <span id="android-download-value">应用专属存储（默认）</span>
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
-                        </span>
-                    </button>
-                </section>
-
-                <div id="android-notification-settings" class="android-notification-settings android-only" aria-label="信息推送设置"></div>
-
-                <section class="android-permission-entry android-only" aria-label="系统权限">
-                    <div class="android-section-label">系统权限</div>
-                    <button id="android-permissions-btn" class="android-nav-row" type="button">
-                        <span class="android-row-icon android-row-icon-green">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
-                        </span>
-                        <span class="android-row-copy"><strong>权限设置</strong><small>后台运行、通知、局域网与文件访问</small></span>
-                        <svg class="android-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
-                    </button>
                 </section>
 
                 <section id="permissions-panel" class="android-permissions-panel">
-                    <header class="android-page-bar android-only">
-                        <button id="android-permissions-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
-                        </button>
-                        <h3>权限设置</h3>
-                        <span></span>
-                    </header>
                     <section class="android-permissions-card">
+                        <div class="setting-item android-permission-row android-only">
+                            <button id="android-notification-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开系统通知权限的通知提醒设置"><strong>系统通知权限</strong></button>
+                            <label class="toggle-switch"><input type="checkbox" id="android-system-notification-toggle" aria-label="系统通知权限" disabled><span class="toggle-slider"></span></label>
+                        </div>
+                        <div class="setting-item android-permission-row android-only">
+                            <button id="android-push-settings-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开通知访问权限的应用信息推送设置"><strong>通知访问权限</strong></button>
+                            <label class="toggle-switch"><input type="checkbox" id="android-notification-access-toggle" aria-label="通知访问权限" disabled><span class="toggle-slider"></span></label>
+                        </div>
                         <div class="setting-item android-permission-row" id="background-receive-setting" style="display: none;">
-                            <span class="android-permission-copy"><strong>后台运行</strong></span>
-                            <button id="background-receive-status" class="android-permission-status" type="button" disabled>正在检查…</button>
+                            <button id="android-background-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开后台运行设置"><strong>后台运行</strong></button>
+                            <label class="toggle-switch"><input type="checkbox" id="background-receive-toggle" aria-label="后台运行" disabled><span class="toggle-slider"></span></label>
                             <div id="background-receive-error" class="setting-hint"></div>
-                            <div id="background-stop-confirm" class="background-stop-confirm" hidden>
-                                <span>停止后台接收并退出 LQChat？</span>
-                                <button id="background-stop-ok" type="button">确认退出</button>
-                                <button id="background-stop-cancel" type="button">取消</button>
-                            </div>
-                            <div class="background-receive-actions" hidden>
-                                <button id="retry-background-service-btn" type="button" style="display: none;">重试</button>
-                            </div>
                         </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>后台常驻</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="background-keep-running-toggle"><span class="toggle-slider"></span></label>
-                        </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>开机自启</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="background-start-on-boot-toggle"><span class="toggle-slider"></span></label>
-                        </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>在最近任务中隐藏</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="background-exclude-recents-toggle"><span class="toggle-slider"></span></label>
-                        </div>
-                        <div class="setting-item android-permission-row">
-                            <span class="android-permission-copy"><strong>通知权限</strong></span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="notification-toggle" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <div id="notification-permission-hint" class="setting-hint"></div>
-                        </div>
-                        <div class="setting-item android-permission-row">
-                            <span class="android-permission-copy"><strong>通知音效</strong><small>消息和文件共用“叮咚”提示音</small></span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="notification-sound-toggle" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <div class="setting-item android-permission-row android-battery-alert-row android-only" id="battery-alert-setting">
-                            <span class="android-permission-copy"><strong>手机电量提醒</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="battery-alert-toggle"><span class="toggle-slider"></span></label>
-                            <fieldset id="battery-alert-controls" class="battery-alert-controls">
-                                <div class="battery-alert-timing">
-                                    <label for="battery-alert-interval-input">提醒间隔</label>
-                                    <span class="battery-alert-number"><input type="number" id="battery-alert-interval-input" class="no-spinner" inputmode="numeric" min="1" max="60" value="5" aria-label="提醒间隔，秒"><span>秒</span></span>
-                                    <label for="battery-alert-repeat-input">提醒次数</label>
-                                    <span class="battery-alert-number"><input type="number" id="battery-alert-repeat-input" class="no-spinner" inputmode="numeric" min="1" max="10" value="3" aria-label="提醒次数"><span>次</span></span>
-                                </div>
-                                <div class="battery-alert-level-row">
-                                    <div id="battery-alert-level-list" class="battery-alert-level-list" aria-label="提醒电量">
-                                        <button type="button" class="battery-alert-level-chip" data-level="50" aria-label="删除 50% 提醒">50% <span aria-hidden="true">×</span></button>
-                                        <button type="button" class="battery-alert-level-chip" data-level="100" aria-label="删除 100% 提醒">100% <span aria-hidden="true">×</span></button>
-                                    </div>
-                                    <input type="number" id="battery-alert-new-level" class="battery-alert-new-level no-spinner" inputmode="numeric" min="1" max="100" placeholder="1–100" aria-label="新增提醒电量">
-                                    <button type="button" id="battery-alert-add-level-btn" class="battery-alert-add-level">＋添加</button>
-                                </div>
-                                <div id="battery-alert-validation" class="setting-hint battery-alert-validation" role="status"></div>
-                            </fieldset>
-                        </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>允许接收其他设备推送</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="android-receive-toggle"><span class="toggle-slider"></span></label>
-                        </div>
-                        <div class="setting-item android-permission-row">
+                        <div id="desktop-auto-download-setting" class="setting-item android-permission-row">
                             <span class="android-permission-copy"><strong>自动下载</strong></span>
                             <label class="toggle-switch"><input type="checkbox" id="auto-download-toggle" checked aria-label="自动下载"><span class="toggle-slider"></span></label>
                         </div>
                         <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>通知访问权限</strong></span>
-                            <button id="android-notification-access-btn" type="button" class="android-inline-action">检查</button>
-                        </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>局域网设备发现</strong></span>
-                            <span class="android-permission-status android-status-ok">已启用</span>
-                        </div>
-                        <div class="setting-item android-permission-row android-only">
-                            <span class="android-permission-copy"><strong>文件访问</strong></span>
-                            <button id="android-permission-file-btn" type="button" class="android-inline-action">设置</button>
-                        </div>
-                        <div class="setting-item android-permission-row android-only" id="android-battery-row">
-                            <span class="android-permission-copy"><strong>电池优化限制</strong></span>
-                            <button id="open-battery-settings-btn" type="button" class="android-inline-action"><span id="battery-optimization-status">正在检查…</span></button>
+                            <button id="android-download-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开外部文件夹访问的下载设置"><strong>外部文件夹访问</strong></button>
+                            <label class="toggle-switch"><input type="checkbox" id="android-permission-file-toggle" aria-label="外部文件夹访问"><span class="toggle-slider"></span></label>
                         </div>
                     </section>
-                    <div class="android-save-bar android-only">
-                        <button id="save-permissions-btn" class="android-primary-action android-only" type="button">保存权限设置</button>
-                    </div>
                 </section>
 
                 <div class="setting-item" id="close-to-tray-setting">
@@ -207,11 +110,7 @@
                     </div>
                     <div class="setting-hint" data-i18n="start_minimized_hint">同时控制开机自启和双击启动，不显示启动窗口</div>
                 </div>
-                <div class="android-save-bar">
-                    <div class="button-group android-settings-actions">
-                        <button id="save-settings-btn" data-i18n="save">保存</button>
-                        <button id="cancel-settings-btn" data-i18n="cancel">取消</button>
-                    </div>
+                <div class="settings-auto-status">
                     <div id="settings-success-msg" class="success-msg" role="status"></div>
                     <div id="settings-error-msg" class="error-msg" role="alert"></div>
                 </div>
@@ -245,6 +144,22 @@
                 </div>
             </div>
         </div>
+        <section id="android-push-details-panel" class="android-overlay-panel android-only" aria-label="信息推送详情">
+            <header class="android-page-bar android-only">
+                <button id="android-push-details-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h3>应用信息推送</h3>
+                <span></span>
+            </header>
+            <div class="settings-content">
+                <section class="android-push-details-card">
+                    <div id="android-notification-settings" class="android-notification-settings android-only"></div>
+                    <div class="ns-settings-content"></div>
+                    <p class="ns-save-status" role="status"></p>
+                </section>
+            </div>
+        </section>
         <section id="android-push-apps-panel" class="android-overlay-panel android-only" aria-label="选择推送应用">
             <header class="android-page-bar android-only">
                 <button id="android-push-apps-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
@@ -277,18 +192,119 @@
                 <button id="android-push-apps-save-btn" class="android-primary-action" type="button">保存选择</button>
             </div>
         </section>
-        <section id="android-lq-push-panel" class="android-overlay-panel android-only" aria-label="lq推送管理">
+        <section id="android-device-settings-panel" class="android-overlay-panel android-only" aria-label="本机设备设置">
             <header class="android-page-bar android-only">
-                <button id="android-lq-push-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
+                <button id="android-device-settings-back-btn" class="android-back-btn" type="button" aria-label="返回主页面">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
                 </button>
-                <h3>lq推送管理</h3>
+                <h3>本机设备</h3>
+                <span></span>
+            </header>
+            <div class="settings-content">
+                <section class="android-settings-card">
+                    <div class="setting-item android-inline-setting">
+                        <label for="settings-device-name-input">设备名称</label>
+                        <input type="text" id="settings-device-name-input" maxlength="50" autocomplete="off">
+                    </div>
+                    <button id="android-download-location-btn" class="android-inline-setting android-download-row" type="button" aria-label="选择下载位置">
+                        <span class="android-download-label">下载位置</span>
+                        <span class="android-download-value-group">
+                            <span id="android-download-value">应用专属存储（默认）</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                        </span>
+                    </button>
+                </section>
+            </div>
+        </section>
+        <section id="android-notification-options-panel" class="android-overlay-panel android-only" aria-label="通知提醒设置">
+            <header class="android-page-bar android-only">
+                <button id="android-notification-options-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h3>通知提醒设置</h3>
                 <span></span>
             </header>
             <div class="settings-content">
                 <section class="android-lq-push-card">
-                    <div class="ns-settings-content"></div>
-                    <p class="ns-save-status" role="status"></p>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>通知提醒</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="notification-toggle" aria-label="通知提醒"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>通知音效</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="notification-sound-toggle" aria-label="通知音效"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>允许接收其他设备推送</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="android-receive-toggle" aria-label="允许接收其他设备推送"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-battery-alert-row" id="battery-alert-setting">
+                        <span class="android-permission-copy"><strong>手机电量提醒</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="battery-alert-toggle"><span class="toggle-slider"></span></label>
+                        <fieldset id="battery-alert-controls" class="battery-alert-controls">
+                            <div class="battery-alert-timing">
+                                <label for="battery-alert-interval-input">提醒间隔</label>
+                                <span class="battery-alert-number"><input type="number" id="battery-alert-interval-input" class="no-spinner" inputmode="numeric" min="1" max="60" value="5" aria-label="提醒间隔，秒"><span>秒</span></span>
+                                <label for="battery-alert-repeat-input">提醒次数</label>
+                                <span class="battery-alert-number"><input type="number" id="battery-alert-repeat-input" class="no-spinner" inputmode="numeric" min="1" max="10" value="3" aria-label="提醒次数"><span>次</span></span>
+                            </div>
+                            <div class="battery-alert-level-row">
+                                <div id="battery-alert-level-list" class="battery-alert-level-list" aria-label="提醒电量">
+                                    <button type="button" class="battery-alert-level-chip" data-level="50" aria-label="删除 50% 提醒">50% <span aria-hidden="true">×</span></button>
+                                    <button type="button" class="battery-alert-level-chip" data-level="100" aria-label="删除 100% 提醒">100% <span aria-hidden="true">×</span></button>
+                                </div>
+                                <input type="number" id="battery-alert-new-level" class="battery-alert-new-level no-spinner" inputmode="numeric" min="1" max="100" placeholder="1–100" aria-label="新增提醒电量">
+                                <button type="button" id="battery-alert-add-level-btn" class="battery-alert-add-level">＋添加</button>
+                            </div>
+                            <div id="battery-alert-validation" class="setting-hint battery-alert-validation" role="status"></div>
+                        </fieldset>
+                    </div>
+                </section>
+            </div>
+        </section>
+        <section id="android-download-options-panel" class="android-overlay-panel android-only" aria-label="下载设置">
+            <header class="android-page-bar android-only">
+                <button id="android-download-options-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h3>下载设置</h3>
+                <span></span>
+            </header>
+            <div class="settings-content">
+                <section class="android-settings-card">
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>自动下载</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="android-auto-download-toggle" aria-label="自动下载"><span class="toggle-slider"></span></label>
+                    </div>
+                </section>
+            </div>
+        </section>
+        <section id="android-background-options-panel" class="android-overlay-panel android-only" aria-label="后台运行设置">
+            <header class="android-page-bar android-only">
+                <button id="android-background-options-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h3>后台运行设置</h3>
+                <span></span>
+            </header>
+            <div class="settings-content">
+                <section class="android-settings-card">
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>后台运行</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="background-receive-detail-toggle" aria-label="后台运行"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>后台常驻</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="background-keep-running-toggle" aria-label="后台常驻"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>开机自启</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="background-start-on-boot-toggle" aria-label="开机自启"><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="setting-item android-permission-row android-only">
+                        <span class="android-permission-copy"><strong>最近任务隐藏</strong></span>
+                        <label class="toggle-switch"><input type="checkbox" id="background-exclude-recents-toggle" aria-label="最近任务隐藏"><span class="toggle-slider"></span></label>
+                    </div>
                 </section>
             </div>
         </section>
@@ -366,10 +382,10 @@
                     </div>
                     <section id="android-home" class="android-home" aria-label="设备主页">
                         <header class="android-home-bar">
-                            <div class="android-local-device">
+                            <button id="android-local-device-btn" class="android-local-device" type="button" aria-label="打开本机设备设置">
                                 <span class="android-online-dot" aria-hidden="true"></span>
                                 <span><strong id="android-device-name">正在加载...</strong><span aria-hidden="true"> · </span><span id="android-device-ip">检测中...</span></span>
-                            </div>
+                            </button>
                             <button id="android-settings-btn" class="android-icon-btn" type="button" aria-label="打开设置">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.2 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2.4v-4h.1A1.7 1.7 0 0 0 4.2 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.6 4.2a1.7 1.7 0 0 0 1-.6A1.7 1.7 0 0 0 10 2.5v-.1h4v.1a1.7 1.7 0 0 0 1 1.7 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 8.6a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7 1Z"/></svg>
                             </button>
@@ -466,6 +482,12 @@
                     <button id="settings-btn">设置</button>
                     <button id="theme-btn">主题</button>
                 </div>
+            </div>
+        </div>
+        <div id="android-app-loading" class="android-app-loading android-only" role="status" aria-live="polite" hidden>
+            <div class="android-app-loading-card">
+                <span class="android-app-loading-spinner" aria-hidden="true"></span>
+                <span>正在读取应用中</span>
             </div>
         </div>
         <!-- 引入 JS -->

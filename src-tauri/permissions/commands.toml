@@ -156,6 +156,16 @@ description = "Allows setting notification enabled state"
 commands.allow = ["set_notifications_enabled"]
 
 [[permission]]
+identifier = "allow-get-notification-sound-enabled"
+description = "Allows reading notification sound enabled state"
+commands.allow = ["get_notification_sound_enabled"]
+
+[[permission]]
+identifier = "allow-set-notification-sound-enabled"
+description = "Allows setting notification sound enabled state"
+commands.allow = ["set_notification_sound_enabled"]
+
+[[permission]]
 identifier = "allow-get-background-receive-state"
 description = "Allows reading the Android background receive Core state"
 commands.allow = ["get_background_receive_state"]

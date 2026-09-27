@@ -232,8 +232,21 @@ body.android-app .user-list-container {
 }
 
 body.android-app .user-list-container {
+  flex: 1 1 100%;
+  max-width: none;
+  border-right: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
+}
+
+body.android-app .chat-container {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100%;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 body.android-app .android-home {
@@ -259,6 +272,24 @@ body.android-app .android-local-device {
   gap: 10px;
   color: var(--android-muted);
   font-size: 13px;
+}
+
+body.android-app button.android-local-device {
+  max-width: calc(100% - 60px);
+  appearance: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.android-app button.android-local-device:focus-visible {
+  outline: 2px solid var(--android-purple);
+  outline-offset: 4px;
 }
 
 body.android-app .android-local-device > span:last-child {
@@ -566,6 +597,15 @@ body.android-app .android-settings-card {
   padding: 0 18px;
 }
 
+body.android-app #settings-panel > .settings-content > .android-settings-card {
+  display: none;
+}
+
+body.android-app #android-device-settings-panel .settings-content {
+  width: min(100%, 680px);
+  margin: 0 auto;
+}
+
 body.android-app .android-settings-card .setting-item {
   margin: 0;
 }
@@ -673,8 +713,7 @@ body.android-app .android-download-value-group svg {
   stroke-linejoin: round;
 }
 
-body.android-app #android-download-location-btn:focus-visible,
-body.android-app #background-receive-status:focus-visible {
+body.android-app #android-download-location-btn:focus-visible {
   outline: 2px solid var(--android-purple);
   outline-offset: -2px;
 }
@@ -726,7 +765,6 @@ body.android-app .android-row-copy small {
   font-size: 12px;
 }
 
-body.android-app .android-permission-entry .android-row-copy small,
 body.android-app .android-notification-settings .ns-hint,
 body.android-app .android-notification-settings .ns-target-copy small {
   display: none;
@@ -741,7 +779,6 @@ body.android-app .android-settings-actions {
   margin: 18px 0 0;
 }
 
-body.android-app #save-settings-btn,
 body.android-app .android-primary-action {
   width: 100%;
   min-height: 48px;
@@ -751,10 +788,6 @@ body.android-app .android-primary-action {
   color: #fff;
   background: var(--android-purple) !important;
   font-weight: 600;
-}
-
-body.android-app #cancel-settings-btn {
-  display: none;
 }
 
 body.android-app #settings-success-msg.show,
@@ -771,50 +804,79 @@ body.android-app #settings-error-msg:not(:empty) {
   box-shadow: 0 8px 24px rgba(39, 31, 78, .12);
 }
 
-/* Android notification controls stay on the main settings page. */
+/* The push switch shares one card with the other Android settings. */
 body.android-app .android-notification-settings.android-only {
   display: block;
 }
 
-body.android-app #android-permission-file-btn.is-authorized {
-  min-height: 38px;
-  padding: 0 10px;
-  color: var(--android-green);
-  background: transparent;
-  box-shadow: none;
-  font-weight: 400;
-}
+body.android-app #port-setting { display: none; }
 
 body.android-app .android-notification-settings .ns-settings-content {
   display: block;
   padding: 0;
 }
 
-body.android-app .android-notification-settings .ns-push-panel {
-  overflow: hidden;
-}
-
-body.android-app .android-notification-settings .ns-check-row {
-  min-height: 64px;
+body.android-app .android-notification-settings .ns-push-entry {
+  min-height: 70px;
   margin: 0;
-  padding: 12px 18px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--android-line);
   color: var(--android-ink);
+  cursor: pointer;
 }
 
-body.android-app .android-notification-settings .ns-target-options {
+body.android-app .android-notification-settings .ns-push-entry-button {
+  flex: 1;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  border: 0;
+  color: var(--android-ink);
+  background: transparent;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+body.android-app .android-notification-settings .ns-push-entry-button::after {
+  content: "›";
+  margin-right: 4px;
+  color: var(--android-muted);
+  font-size: 22px;
+  font-weight: 400;
+}
+
+body.android-app .android-notification-settings .ns-push-entry-button:focus-visible {
+  outline: 2px solid var(--android-purple);
+  outline-offset: 2px;
+}
+
+body.android-app #android-push-details-panel .settings-content {
+  width: min(100%, 680px);
+  margin: 0 auto;
+}
+
+body.android-app .android-push-details-card .ns-settings-content {
+  padding: 0;
+}
+
+body.android-app #android-push-details-panel .ns-target-options {
   max-height: none;
   overflow: visible;
   padding: 0;
 }
 
-body.android-app .android-notification-settings .ns-target-options .ns-check-row {
+body.android-app #android-push-details-panel .ns-target-options .ns-check-row {
   min-height: 76px;
-  padding-left: 76px;
+  margin: 0;
+  padding: 12px 18px 12px 76px;
   position: relative;
+  border-bottom: 1px solid var(--android-line);
 }
 
-body.android-app .android-notification-settings .ns-target-options .ns-check-row::before {
+body.android-app #android-push-details-panel .ns-target-options .ns-check-row::before {
   content: "▣";
   width: 44px;
   height: 44px;
@@ -827,13 +889,13 @@ body.android-app .android-notification-settings .ns-target-options .ns-check-row
   background: var(--android-purple-soft);
 }
 
-body.android-app .android-notification-settings .ns-target-copy {
+body.android-app #android-push-details-panel .ns-target-copy {
   min-width: 0;
   display: grid;
   gap: 4px;
 }
 
-body.android-app .android-notification-settings .ns-target-copy strong {
+body.android-app #android-push-details-panel .ns-target-copy strong {
   overflow: hidden;
   color: var(--android-ink);
   font-size: 14px;
@@ -841,7 +903,7 @@ body.android-app .android-notification-settings .ns-target-copy strong {
   white-space: nowrap;
 }
 
-body.android-app .android-notification-settings .ns-target-copy small {
+body.android-app #android-push-details-panel .ns-target-copy small {
   overflow: hidden;
   color: var(--android-muted);
   font-size: 12px;
@@ -849,14 +911,7 @@ body.android-app .android-notification-settings .ns-target-copy small {
   white-space: nowrap;
 }
 
-body.android-app .android-notification-settings .ns-check-row > input {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  accent-color: var(--android-purple);
-}
-
-body.android-app .android-notification-settings .ns-test-button {
+body.android-app #android-push-details-panel .ns-test-button {
   width: 100%;
   min-height: 58px;
   padding: 12px 18px;
@@ -868,7 +923,7 @@ body.android-app .android-notification-settings .ns-test-button {
   font-weight: 600;
 }
 
-body.android-app .android-notification-settings .ns-app-picker-row {
+body.android-app #android-push-details-panel .ns-app-picker-row {
   width: 100%;
   min-height: 64px;
   display: flex;
@@ -884,12 +939,12 @@ body.android-app .android-notification-settings .ns-app-picker-row {
   text-align: left;
 }
 
-body.android-app .android-notification-settings .ns-app-picker-row strong {
+body.android-app #android-push-details-panel .ns-app-picker-row strong {
   font-size: 14px;
   font-weight: 600;
 }
 
-body.android-app .android-notification-settings .ns-app-picker-summary {
+body.android-app #android-push-details-panel .ns-app-picker-summary {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -898,22 +953,30 @@ body.android-app .android-notification-settings .ns-app-picker-summary {
   white-space: nowrap;
 }
 
-body.android-app .android-notification-settings .ns-app-picker-summary::after {
+body.android-app #android-push-details-panel .ns-app-picker-summary::after {
   content: "›";
   font-size: 22px;
   line-height: 1;
 }
 
+body.android-app #android-push-details-panel .ns-save-status,
 body.android-app .android-notification-settings .ns-save-status {
   min-height: 0;
   margin: 8px 0 0;
-  padding: 0;
+  padding: 0 18px 14px;
   color: var(--android-purple);
   font-size: 12px;
 }
 
+body.android-app #android-push-details-panel .ns-save-status:empty,
 body.android-app .android-notification-settings .ns-save-status:empty {
   display: none;
+}
+
+body.android-app #android-push-details-panel .ns-target-options > .ns-hint {
+  margin: 0;
+  padding: 18px;
+  color: var(--android-muted);
 }
 
 body.android-app .android-receive-settings-panel .settings-content {
@@ -992,6 +1055,45 @@ body.android-app .android-overlay-panel.is-open {
   display: block;
 }
 
+body.android-app .android-app-loading:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(38, 31, 61, .28);
+}
+
+body.android-app .android-app-loading[hidden] {
+  display: none;
+}
+
+body.android-app .android-app-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 24px;
+  border-radius: 18px;
+  background: var(--android-card);
+  color: var(--android-ink);
+  font-weight: 600;
+  box-shadow: 0 20px 48px rgba(51, 43, 84, .2);
+}
+
+body.android-app .android-app-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--android-purple-soft);
+  border-top-color: var(--android-purple);
+  border-radius: 50%;
+  animation: android-app-loading-spin .8s linear infinite;
+}
+
+@keyframes android-app-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 body.android-app .android-overlay-panel > .android-page-bar {
   position: sticky;
   top: 0;
@@ -1000,6 +1102,7 @@ body.android-app .android-overlay-panel > .android-page-bar {
 }
 
 body.android-app .android-app-picker-card,
+body.android-app .android-push-details-card,
 body.android-app .android-lq-push-card,
 body.android-app .android-push-sources-card {
   width: min(100%, 680px);
@@ -1011,12 +1114,46 @@ body.android-app .android-push-sources-card {
   box-shadow: 0 12px 34px rgba(39, 31, 78, .08);
 }
 
-body.android-app #android-lq-push-panel .settings-content {
+body.android-app .android-lq-push-card {
+  padding: 0 18px;
+}
+
+body.android-app #android-notification-options-panel .settings-content,
+body.android-app #android-background-options-panel .settings-content {
   width: min(100%, 680px);
+  margin: 0 auto;
 }
 
 body.android-app .android-lq-push-card .ns-settings-content {
   padding: 0;
+}
+
+body.android-app .android-lq-push-card #battery-alert-setting {
+  padding: 14px 0;
+}
+
+body.android-app #android-push-details-panel .ns-settings-content > .ns-toggle-row {
+  min-height: 70px;
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--android-line);
+  color: var(--android-ink);
+  font-weight: 600;
+}
+
+body.android-app .android-lq-push-card .ns-check-row {
+  min-height: 64px;
+  margin: 0;
+  padding: 12px 18px;
+  color: var(--android-ink);
+}
+
+body.android-app .android-lq-push-card .ns-hint {
+  margin: 0;
+  padding: 14px 18px 18px;
+  color: var(--android-muted);
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 body.android-app .android-lq-push-card .ns-save-status {
@@ -1248,33 +1385,42 @@ body.android-app .android-push-sources-list {
   padding: 0 18px;
 }
 
-/* Permission page is the only Android second-level settings page. */
-body.android-app #permissions-panel {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 1010;
-  overflow-y: auto;
-  box-sizing: border-box;
-  padding: max(14px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
-  background: var(--android-bg);
-}
-
-body.android-app #permissions-panel.is-open {
-  display: block;
-}
-
-body.android-app #permissions-panel > .android-page-bar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--android-bg);
-}
-
 body.android-app .android-permissions-card {
-  width: min(100%, 680px);
-  margin: 0 auto;
   padding: 0 18px;
+}
+
+body.android-app #desktop-auto-download-setting {
+  display: none;
+}
+
+body.android-app button.android-permission-entry {
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.android-app button.android-permission-entry::after {
+  content: "›";
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin: 0 4px 0 12px;
+  color: var(--android-muted);
+  font-size: 22px;
+  line-height: 1;
+}
+
+body.android-app button.android-permission-entry:focus-visible {
+  outline: 2px solid var(--android-purple);
+  outline-offset: 3px;
 }
 
 body.android-app .android-permission-row {
@@ -1401,23 +1547,6 @@ body.android-app .battery-alert-new-level {
   text-align: center;
 }
 
-body.android-app .background-stop-confirm {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: #a93449;
-}
-body.android-app .background-stop-confirm[hidden] { display: none; }
-body.android-app .background-stop-confirm button {
-  border: 1px solid var(--android-line);
-  border-radius: 8px;
-  padding: 5px 9px;
-  background: var(--android-bg);
-  color: var(--android-ink);
-}
-
 body.android-app .battery-alert-validation {
   margin: -4px 0 0;
   color: #a93449;
@@ -1461,90 +1590,18 @@ body.android-app .android-inline-action {
   background: var(--android-purple-soft);
 }
 
-body.android-app #android-notification-access-btn.is-authorized {
-  min-width: 44px;
-  min-height: 44px;
-  margin: 0;
-  padding: 0;
-  color: var(--android-green);
-  background: transparent;
-  box-shadow: none;
-  font-weight: 400;
-  text-align: right;
-}
-
-body.android-app #android-notification-access-btn:focus-visible {
-  outline: 2px solid var(--android-purple);
-  outline-offset: 3px;
-}
-
 body.android-app #background-receive-setting {
   display: grid !important;
 }
 
-body.android-app #background-receive-status {
-  min-width: 44px;
-  min-height: 44px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  box-shadow: none;
-  text-align: right;
-  cursor: pointer;
-}
-
-body.android-app #background-receive-status:disabled {
-  color: var(--android-muted);
-  cursor: default;
-}
-
-body.android-app #background-receive-status[data-state="ERROR"] {
-  color: #a93449;
-}
-
-body.android-app #background-receive-status:not(:disabled):active {
-  background: var(--android-green-soft);
-}
-
-body.android-app #background-receive-error,
-body.android-app #notification-permission-hint {
+body.android-app #background-receive-error {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--android-muted);
 }
 
-body.android-app .background-receive-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-body.android-app .background-receive-actions button {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 10px;
-  color: var(--android-purple);
-  background: var(--android-purple-soft);
-}
-
-body.android-app .background-receive-actions[hidden],
 body.android-app #background-receive-error:empty {
   display: none;
-}
-
-body.android-app #open-battery-settings-btn {
-  border: 0;
-  background: transparent;
-}
-
-body.android-app #save-permissions-btn {
-  display: block;
-  width: min(100%, 680px);
-  margin: 18px auto 0;
 }
 
 /* Android add-device uses the existing persistence workflow in a full page. */
@@ -1582,8 +1639,6 @@ body.android-app #cancel-peer-btn {
 }
 
 /* Save actions remain in the visible viewport while each page scrolls. */
-body.android-app #settings-panel,
-body.android-app #permissions-panel,
 body.android-app #add-peer-panel,
 body.android-app #android-push-apps-panel {
   /* A filtered ancestor would make fixed footers scroll with that ancestor. */
@@ -1592,6 +1647,35 @@ body.android-app #android-push-apps-panel {
   padding-bottom: calc(var(--android-save-bar-height, 104px) + var(--android-keyboard-inset, 0px) + 16px);
   scroll-padding-bottom: calc(var(--android-save-bar-height, 104px) + var(--android-keyboard-inset, 0px) + 16px);
 }
+
+/* Keep the picker controls and save action visible; only its list card scrolls. */
+body.android-app #android-push-apps-panel.is-open {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  padding-bottom: calc(var(--android-save-bar-height, 104px) + var(--android-keyboard-inset, 0px) + 12px);
+}
+
+body.android-app #android-push-apps-panel > .android-page-bar,
+body.android-app #android-push-apps-panel > .android-app-picker-tools {
+  flex: 0 0 auto;
+}
+
+body.android-app #android-push-apps-panel > .android-app-picker-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.android-app #settings-panel {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+}
+
+body.android-app .settings-auto-status .success-msg { color: var(--android-purple); }
+body.android-app .settings-auto-status .error-msg:empty { display: none; }
 
 body.android-app .android-save-bar {
   position: fixed;
@@ -1609,8 +1693,7 @@ body.android-app .android-save-bar {
 }
 
 body.android-app .android-save-bar .button-group,
-body.android-app .android-save-bar #android-push-apps-save-btn,
-body.android-app .android-save-bar #save-permissions-btn {
+body.android-app .android-save-bar #android-push-apps-save-btn {
   width: 100%;
   margin: 0;
 }
@@ -1648,7 +1731,6 @@ body.android-app .android-save-bar .success-msg:not(.show) {
   }
   body.android-app .android-home,
   body.android-app .settings-panel,
-  body.android-app #permissions-panel,
   body.android-app .android-overlay-panel {
     padding-left: 14px;
     padding-right: 14px;

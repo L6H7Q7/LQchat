@@ -212,6 +212,9 @@ async function refreshPeerListNow() {
       peer.name,
       peer.addr,
       Boolean(peer.is_offline),
+      Boolean(peer.notification_receive_enabled),
+      Boolean(peer.notification_push_enabled),
+      peer.notification_push_target_device_ids || [],
     ]));
     if (peerSnapshot === lastPeerSnapshot) return peers;
     lastPeerSnapshot = peerSnapshot;

@@ -140,6 +140,8 @@ body.windows-app :is(.settings-panel,.edit-panel,.theme-panel) {
   font-family: inherit !important; animation: none; backdrop-filter: none;
 }
 body.windows-app :is(.settings-panel,.theme-panel) h3 { color: var(--desktop-ink); font-size: 21px; padding: 0 0 18px; margin: 0 0 20px; border: 0; }
+body.windows-app #settings-panel .settings-close-btn { position: absolute; top: 17px; right: 18px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--desktop-line); border-radius: 10px; background: #fff; color: var(--desktop-muted); font-size: 22px; line-height: 1; }
+body.windows-app #settings-panel .settings-close-btn:hover { color: var(--desktop-ink); background: var(--desktop-soft); }
 body.windows-app #settings-panel .settings-content { display: flex; flex-direction: column; gap: 12px; }
 body.windows-app #settings-panel :is(.android-settings-card,.android-permissions-panel) { padding: 4px 18px; background: #fff; border: 1px solid var(--desktop-line); border-radius: 18px; }
 body.windows-app #settings-panel .setting-item { margin: 0; padding: 15px 0; border: 0; border-bottom: 1px solid var(--desktop-line); }
@@ -168,11 +170,13 @@ body.windows-app .setting-hint { margin: 6px 0 0; color: var(--desktop-muted); f
 body.windows-app :is(#choose-db-path-btn,#choose-path-btn,#add-custom-peer-btn) { width: auto; height: 42px; padding: 0 16px; border: 0; border-radius: 11px; background: var(--desktop-soft); color: var(--desktop-accent) !important; }
 body.windows-app .desktop-receive-settings { text-align: left; padding: 15px 18px; background: #fff; border: 1px solid var(--desktop-line); border-radius: 16px; color: var(--desktop-accent); }
 body.windows-app .desktop-receive-settings::after { content: "›"; float: right; color: var(--desktop-muted); }
+body.windows-app .settings-auto-status .success-msg { color: var(--desktop-accent); }
+body.windows-app .settings-auto-status .error-msg:empty { display: none; }
 body.windows-app .android-save-bar { position: sticky; bottom: -26px; padding: 14px 0 4px; margin-top: 0; background: var(--desktop-bg); z-index: 2; }
 body.windows-app .button-group { display: flex; gap: 10px; margin: 0; }
 body.windows-app .button-group button { height: 42px; border-radius: 12px; border: 0; font-size: 13px; box-shadow: none; }
-body.windows-app :is(#save-settings-btn,#save-name-btn,#save-peer-btn,#apply-theme-btn) { color: #fff; background: var(--desktop-accent); }
-body.windows-app :is(#cancel-settings-btn,#cancel-name-btn,#cancel-peer-btn,#cancel-theme-btn) { color: var(--desktop-muted); background: #e9ebf3; }
+body.windows-app :is(#save-name-btn,#save-peer-btn,#apply-theme-btn) { color: #fff; background: var(--desktop-accent); }
+body.windows-app :is(#cancel-name-btn,#cancel-peer-btn,#cancel-theme-btn) { color: var(--desktop-muted); background: #e9ebf3; }
 body.windows-app .ns-dialog { border: 1px solid var(--desktop-line); border-radius: 24px; max-width: calc(100vw - 40px); max-height: calc(100dvh - 48px); box-shadow: 0 24px 90px #24213830; }
 body.windows-app .ns-dialog::backdrop { background: #25223935; backdrop-filter: blur(3px); }
 body.windows-app .ns-dialog-header h2 { letter-spacing: 0; font-size: 19px; }
