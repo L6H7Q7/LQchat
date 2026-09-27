@@ -1886,6 +1886,14 @@ pub async fn delete_user_complete(
         .await
 }
 
+#[tauri::command]
+pub async fn clear_offline_peers(
+    state: tauri::State<'_, crate::db::DbState>,
+    peer_state: tauri::State<'_, PeerState>,
+) -> Result<Vec<String>, String> {
+    peer_state.active_manager().clear_offline_peer_profiles(&state.pool).await
+}
+
 // ── 自定义 IP 命令 ──
 
 #[tauri::command]

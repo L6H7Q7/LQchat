@@ -839,6 +839,7 @@ window.NotificationUI = (() => {
       const chatGroup = el("details", "ns-chat-group");
       chatGroup.open = true;
       chatGroup.append(el("summary", "", "局域网聊天设备"));
+      chatGroup.append(button("清除", () => window.clearOfflinePeerDevices?.(), "ns-clear-offline-peers"));
       sidebar.insertBefore(chatGroup, document.getElementById("android-listening"));
       chatGroup.append(chatList);
       const incoming = group("信息接收设备", false);

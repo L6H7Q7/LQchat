@@ -30,7 +30,9 @@ async function renderPage() {
 
   document.getElementById("android-settings-btn")?.addEventListener("click", () => document.getElementById("settings-btn")?.click());
   document.getElementById("desktop-refresh-btn")?.addEventListener("click", () => document.getElementById("android-refresh-peers-btn")?.click());
+  document.getElementById("desktop-clear-offline-peers-btn")?.addEventListener("click", () => clearOfflinePeerDevices());
   document.getElementById("android-add-peer-btn")?.addEventListener("click", () => document.getElementById("add-peer-btn")?.click());
+  document.getElementById("android-clear-offline-peers-btn")?.addEventListener("click", () => clearOfflinePeerDevices());
   document.getElementById("android-receive-sources-btn")?.addEventListener("click", () => window.NotificationUI?.openPushSources?.());
   document.getElementById("android-refresh-peers-btn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;

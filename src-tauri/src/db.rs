@@ -1310,6 +1310,19 @@ pub async fn set_notifications_enabled(
     Ok(())
 }
 
+/// 仅从设备列表移除档案；聊天记录保留，设备重新发现后仍可查看。
+pub async fn delete_peer_profile(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    peer_id: &str,
+) -> Result<(), String> {
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(peer_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("清除设备失败: {e}"))?;
+    Ok(())
+}
+
 /// 获取消息与文件通知音效开关状态（默认开启）。
 pub async fn get_notification_sound_enabled(pool: &sqlx::Pool<sqlx::Sqlite>) -> bool {
     let res = sqlx::query_as::<_, (String,)>(

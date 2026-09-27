@@ -75,6 +75,15 @@ impl PeerManager {
         }
     }
 
+    fn remove_peer_if_offline(&self, id: &str) -> bool {
+        let mut peers = self.peers.write().unwrap();
+        if !peers.get(id).is_some_and(|peer| peer.is_offline) {
+            return false;
+        }
+        peers.remove(id);
+        true
+    }
+
     // 从数据库加载历史用户
     pub async fn load_from_db(&self, pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<(), String> {
         println!("[PeerManager] 从数据库加载历史用户...");
@@ -313,6 +322,20 @@ impl PeerManager {
     }
 
     #[cfg(windows)]
+    pub(crate) fn begin_offline_profile_delete(
+        &self,
+        store: &crate::peer_persistence::PeerPersistence,
+        id: &str,
+    ) -> bool {
+        let peers = self.peers.write().unwrap();
+        if !peers.get(id).is_some_and(|peer| peer.is_offline) {
+            return false;
+        }
+        store.suppress(id);
+        true
+    }
+
+    #[cfg(windows)]
     pub(crate) fn end_profile_delete(
         &self,
         store: &crate::peer_persistence::PeerPersistence,
@@ -341,6 +364,58 @@ impl PeerManager {
         crate::db::delete_user_and_history(pool, my_id, peer_id).await?;
         self.remove_peer(peer_id);
         Ok(())
+    }
+
+    /// 清除当前不在局域网的设备档案，不删除双方的聊天记录。
+    pub async fn clear_offline_peer_profiles(
+        self: &Arc<Self>,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+    ) -> Result<Vec<String>, String> {
+        use futures_util::{stream::FuturesUnordered, StreamExt};
+
+        let candidates: Vec<Peer> = self.get_all_peers().into_iter()
+            .filter(|peer| peer.is_offline)
+            .collect();
+        let mut probes = FuturesUnordered::new();
+        for peer in candidates {
+            probes.push(async move {
+                let reachable = !peer.addr.is_empty() && matches!(
+                    tokio::time::timeout(
+                        PRESENCE_PROBE_TIMEOUT,
+                        tokio::net::TcpStream::connect(&peer.addr),
+                    ).await,
+                    Ok(Ok(_))
+                );
+                (peer.id, reachable)
+            });
+        }
+        let mut removed = Vec::new();
+        while let Some((peer_id, reachable)) = probes.next().await {
+            if reachable {
+                continue;
+            }
+            #[cfg(windows)]
+            if let Some(store) = self.persistence() {
+                if store.delete_offline_profile(self.clone(), peer_id.clone()).await? {
+                    removed.push(peer_id);
+                }
+                continue;
+            }
+
+            if !self.get_all_peers().iter().any(|peer| peer.id == peer_id && peer.is_offline) {
+                continue;
+            }
+            crate::db::delete_peer_profile(pool, &peer_id).await?;
+            if self.remove_peer_if_offline(&peer_id) {
+                removed.push(peer_id);
+            } else if let Some(peer) = self.get_all_peers().into_iter().find(|peer| peer.id == peer_id) {
+                // 写库期间重新发现的在线设备不能从列表消失，顺带恢复其档案。
+                crate::db::save_or_update_user(
+                    pool, peer.id, peer.name, peer.addr, false, peer.available_memory_mb,
+                ).await?;
+            }
+        }
+        Ok(removed)
     }
 }
 

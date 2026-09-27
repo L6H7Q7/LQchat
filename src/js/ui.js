@@ -4617,6 +4617,27 @@ function showConfirm(message, onOk) {
   };
 }
 
+async function clearOfflinePeerDevices() {
+  const peers = await apiGetPeers();
+  const offline = peers.filter(peer => peer.is_offline);
+  if (!offline.length) {
+    showMessageActionToast("没有需要清除的离线设备");
+    return;
+  }
+  showConfirm(
+    `确定清除 ${offline.length} 台当前不在局域网的设备吗？聊天记录会保留，设备再次出现时会重新加入列表。`,
+    async () => {
+      const removed = await apiClearOfflinePeers();
+      if (window.currentChatPeer && removed.includes(window.currentChatPeer.id)) {
+        performCloseChatUI();
+      }
+      await refreshPeerListNow();
+      showMessageActionToast(`已清除 ${removed.length} 台离线设备`);
+    },
+  );
+}
+window.clearOfflinePeerDevices = clearOfflinePeerDevices;
+
 // ==========================================
 // 2. 完整的用户管理弹窗函数
 // ==========================================

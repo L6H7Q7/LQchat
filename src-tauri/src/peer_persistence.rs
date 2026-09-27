@@ -267,6 +267,24 @@ impl PeerPersistence {
             result
         }).await.map_err(|e| format!("删除设备任务失败: {e}"))?
     }
+
+    /// 与档案写入共用屏障，防止旧的待写任务把刚清除的离线设备写回来。
+    pub async fn delete_offline_profile(
+        self: &Arc<Self>,
+        manager: Arc<PeerManager>,
+        peer_id: String,
+    ) -> Result<bool, String> {
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _gate = store.write_gate.lock().await;
+            if !manager.begin_offline_profile_delete(&store, &peer_id) {
+                return Ok(false);
+            }
+            let result = crate::db::delete_peer_profile(&store.pool, &peer_id).await;
+            manager.end_profile_delete(&store, &peer_id, result.is_ok());
+            result.map(|_| true)
+        }).await.map_err(|e| format!("清除设备任务失败: {e}"))?
+    }
 }
 
 #[cfg(test)]
@@ -501,6 +519,34 @@ mod tests {
         f.store.flush().await.unwrap();
         assert_eq!(f.count("users").await, 1);
         assert_eq!(f.count("messages").await, 1);
+    }
+
+    #[tokio::test]
+    async fn clearing_offline_profiles_keeps_online_peers_and_chat_history() {
+        let f = Fixture::new(true).await;
+        sqlx::query("INSERT INTO messages(id,sender_id,receiver_id) VALUES(1,'me','peer')")
+            .execute(&f.pool).await.unwrap();
+        f.manager.observe_discovery("online".into(), "在线设备".into(), "127.0.0.1:8889".into(), 512);
+        let removed = f.manager.clear_offline_peer_profiles(&f.pool).await.unwrap();
+        assert_eq!(removed, vec!["peer"]);
+        assert_eq!(f.count("messages").await, 1);
+        assert!(f.manager.get_all_peers().iter().all(|peer| peer.id != "peer"));
+        assert!(f.manager.get_all_peers().iter().any(|peer| peer.id == "online" && !peer.is_offline));
+        let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE id='peer'")
+            .fetch_one(&f.pool).await.unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn clearing_offline_profiles_skips_reachable_stale_device() {
+        let f = Fixture::new(false).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        f.manager.observe_discovery("reachable".into(), "暂未重发现".into(), addr, 256);
+        f.manager.force_mark_offline("reachable");
+        let removed = f.manager.clear_offline_peer_profiles(&f.pool).await.unwrap();
+        assert!(removed.is_empty());
+        assert!(f.manager.get_all_peers().iter().any(|peer| peer.id == "reachable"));
     }
 
     #[tokio::test]

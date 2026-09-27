@@ -930,6 +930,15 @@ async function apiDeleteUserComplete(peerId) {
   }
 }
 
+async function apiClearOfflinePeers() {
+  const tauri = getTauri();
+  if (tauri) return await tauri.core.invoke("clear_offline_peers");
+  const response = await fetch("/api/clear_offline_peers", { method: "POST" });
+  if (!response.ok) throw new Error(`清除设备失败：HTTP ${response.status}`);
+  const result = await response.json();
+  return result.removed || [];
+}
+
 async function apiGetCustomPeers() {
   const tauri = getTauri();
 

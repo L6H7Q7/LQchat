@@ -157,6 +157,7 @@ fn main() {
             lanchat::commands::delete_messages,
             lanchat::commands::clear_chat_history,
             lanchat::commands::delete_user_complete,
+            lanchat::commands::clear_offline_peers,
             lanchat::commands::get_custom_peers,
             lanchat::commands::add_custom_peer,
             lanchat::commands::remove_custom_peer,

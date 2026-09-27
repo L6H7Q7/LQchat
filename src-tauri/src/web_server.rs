@@ -147,6 +147,7 @@ pub async fn run_server(
         .route("/api/delete_upload_record", post(delete_upload_record_http))
         .route("/api/clear_chat_history", post(clear_chat_history_http))
         .route("/api/delete_user", post(delete_user_http))
+        .route("/api/clear_offline_peers", post(clear_offline_peers_http))
         .route("/api/delete_messages", post(delete_messages_http))
         .route("/api/get_theme_list", get(get_theme_list_http))
         .route("/api/get_theme_css/:theme_name", get(get_theme_css_http))
@@ -3144,6 +3145,13 @@ async fn delete_user_http(
             Json(ErrorResponse { error: e }),
         )
             .into_response(),
+    }
+}
+
+async fn clear_offline_peers_http(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.peer_manager.clear_offline_peer_profiles(&state.pool).await {
+        Ok(removed) => (StatusCode::OK, Json(serde_json::json!({ "removed": removed }))).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response(),
     }
 }
 

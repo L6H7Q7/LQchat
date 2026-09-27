@@ -171,6 +171,7 @@ pub fn run() {
             commands::clear_chat_history,
             commands::request_file,
             commands::delete_user_complete,
+            commands::clear_offline_peers,
             commands::get_custom_peers,
             commands::add_custom_peer,
             commands::remove_custom_peer,
