@@ -116,6 +116,11 @@ description = "Allows deleting a user and their full chat history"
 commands.allow = ["delete_user_complete"]
 
 [[permission]]
+identifier = "allow-clear-offline-peers"
+description = "Allows removing offline LAN peers while keeping chat history"
+commands.allow = ["clear_offline_peers"]
+
+[[permission]]
 identifier = "allow-get-custom-peers"
 description = "Allows reading custom peer IP addresses"
 commands.allow = ["get_custom_peers"]
