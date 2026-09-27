@@ -198,6 +198,7 @@ pub async fn run_listener(
     cancellation: CancellationToken,
 ) -> Result<(), String> {
     let mut buffer = [0_u8; 1024];
+    let identity_client = crate::network::lan_http_client(Some(crate::peers::PRESENCE_PROBE_TIMEOUT))?;
     println!("[UDP] 正在端口 {port} 监听邻居...");
 
     loop {
@@ -219,6 +220,15 @@ pub async fn run_listener(
         let peer_port = parts[4];
         let available_memory_mb = parts[5].parse().unwrap_or(0);
         let peer_addr = format!("{}:{peer_port}", address.ip());
+        // UDP 来源 IP 在模拟器/NAT 下可能是宿主机。只有地址返回同一设备 ID，
+        // 才能把该地址标为在线或用它补发消息。
+        let matches_identity = tokio::select! {
+            _ = cancellation.cancelled() => return Ok(()),
+            matches = crate::peers::same_peer_reachable(&identity_client, &peer_id, &peer_addr) => matches,
+        };
+        if !matches_identity {
+            continue;
+        }
         let notification_presence = parse_notification_presence(&parts);
         let Some(connection_transition) = peer_manager.observe_discovery(
             peer_id.clone(),

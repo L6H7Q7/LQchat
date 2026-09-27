@@ -657,6 +657,14 @@ mod tests {
     async fn loopback_discovery_keeps_receiving_without_heartbeat_database_writes() {
         let f = Fixture::new(true).await;
         let before = f.counter();
+        let identity_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let identity_port = identity_listener.local_addr().unwrap().port();
+        let identity_router = axum::Router::new().route("/api/get_my_id", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({ "id": "peer" }))
+        }));
+        let identity_server = tokio::spawn(async move {
+            axum::serve(identity_listener, identity_router).await.unwrap()
+        });
         let listener = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let target = listener.local_addr().unwrap();
         let sender = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -675,7 +683,7 @@ mod tests {
             cancel.child_token(),
         ));
         for n in 0..100 {
-            let packet = format!("LANChat|ONLINE|peer|name|12345|{n}|1");
+            let packet = format!("LANChat|ONLINE|peer|name|{identity_port}|{n}|1");
             sender.send_to(packet.as_bytes(), target).await.unwrap();
             tokio::time::timeout(Duration::from_secs(2), events.recv())
                 .await
@@ -684,10 +692,56 @@ mod tests {
         }
         cancel.cancel();
         discovery.await.unwrap().unwrap();
+        identity_server.abort();
         worker.await.unwrap().unwrap();
-        assert_eq!(f.counter(), before);
-        assert_eq!(f.store.status().successful_transactions, 0);
+        // 启动后首次核实身份会把历史离线设备标记为重新上线，写入一次；
+        // 后续心跳不应再触发数据库写入。
+        assert_eq!(f.counter(), before + 1);
+        assert_eq!(f.store.status().successful_transactions, 1);
         assert_eq!(f.manager.get_all_peers()[0].available_memory_mb, 99);
+    }
+
+    #[tokio::test]
+    async fn discovery_does_not_mark_a_different_device_online_at_reused_address() {
+        let f = Fixture::new(true).await;
+        let identity_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let identity_port = identity_listener.local_addr().unwrap().port();
+        let identity_router = axum::Router::new().route("/api/get_my_id", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({ "id": "actual-device" }))
+        }));
+        let identity_server = tokio::spawn(async move {
+            axum::serve(identity_listener, identity_router).await.unwrap()
+        });
+        let listener = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap();
+        let sender = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let cancel = CancellationToken::new();
+        let bus = crate::core_events::CoreEventBus::default();
+        let mut events = bus.subscribe();
+        let discovery = tokio::spawn(crate::network::discovery::run_listener(
+            listener,
+            target.port(),
+            "me".into(),
+            "local".into(),
+            f.manager.clone(),
+            f.pool.clone(),
+            bus,
+            cancel.child_token(),
+        ));
+        let packet = format!("LANChat|ONLINE|peer|name|{identity_port}|128|1");
+        sender.send_to(packet.as_bytes(), target).await.unwrap();
+        let valid_packet = format!("LANChat|ONLINE|actual-device|name|{identity_port}|128|1");
+        sender.send_to(valid_packet.as_bytes(), target).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let peers = f.manager.get_all_peers();
+        assert!(peers.iter().any(|peer| peer.id == "peer" && peer.is_offline));
+        assert!(peers.iter().any(|peer| peer.id == "actual-device" && !peer.is_offline));
+        cancel.cancel();
+        discovery.await.unwrap().unwrap();
+        identity_server.abort();
     }
 
     #[tokio::test]
@@ -696,7 +750,8 @@ mod tests {
         let legacy = PeerManager::new();
         legacy.load_from_db(&f.pool).await.unwrap();
         assert!(legacy.persistence().is_none());
-        assert_eq!(legacy.get_all_peers()[0].available_memory_mb, 4096);
+        assert!(legacy.get_all_peers()[0].is_offline);
+        assert_eq!(legacy.get_all_peers()[0].available_memory_mb, 0);
     }
 
     #[tokio::test]

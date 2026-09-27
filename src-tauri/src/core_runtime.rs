@@ -327,7 +327,6 @@ impl CoreRuntime {
         let supervisor_cancellation = cancellation.clone();
         let pool = prepared.pool;
         let peer_manager = prepared.peer_manager;
-        #[cfg(windows)]
         peer_manager.begin_presence_session();
         let pool_ownership = prepared.pool_ownership;
         let supervisor_pool = pool.clone();

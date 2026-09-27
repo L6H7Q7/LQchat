@@ -3,14 +3,14 @@
 
 > 面向 Windows 与 Android 的局域网消息、文件传输和 Android 通知转发工具。无需账号，不依赖云端。
 >
-> 🌐 [English Documentation](README.md) · [下载发布版 v17](https://github.com/acclt/LQchat/releases/latest)
+> 🌐 [English Documentation](README.md) · [下载发布版 v18](https://github.com/acclt/LQchat/releases/latest)
 
 <p align="center">
   <img src="artifacts/0.2/device/windows-build1022-wide.jpg" width="68%" alt="LQChat Windows 界面" />
   <img src="artifacts/0.2/device/home-build1022.png" width="27%" alt="LQChat Android 界面" />
 </p>
 
-## 当前版本：v17
+## 当前版本：v18
 
 本仓库基于 [cap153/LANChat](https://github.com/cap153/LANChat) 继续开发，目前重点是 Windows 与 Android 之间可靠、常驻的局域网互联：
 

@@ -7,9 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
 const PRESENCE_GRACE: Duration = Duration::from_secs(12);
-const PRESENCE_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
+pub(crate) const PRESENCE_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
-async fn same_peer_reachable(client: &reqwest::Client, expected_id: &str, addr: &str) -> bool {
+pub(crate) async fn same_peer_reachable(client: &reqwest::Client, expected_id: &str, addr: &str) -> bool {
     if addr.is_empty() {
         return false;
     }
@@ -21,15 +21,9 @@ async fn same_peer_reachable(client: &reqwest::Client, expected_id: &str, addr: 
             .and_then(|body| body.get("id")?.as_str().map(str::to_owned)),
         _ => None,
     };
-    // 地址和端口可以被另一设备或重新安装的实例复用，不能只凭 TCP 通就判定旧 ID 在线。
-    // 旧版客户端若没有身份接口，仍保守地使用 TCP 探测。
-    match reported_id {
-        Some(id) => id == expected_id,
-        None => matches!(
-            tokio::time::timeout(PRESENCE_PROBE_TIMEOUT, tokio::net::TcpStream::connect(addr)).await,
-            Ok(Ok(_))
-        ),
-    }
+    // 同一地址可能已被另一台设备占用。身份不可确认时必须视为离线，
+    // 不能退回到“端口能连接就算在线”，否则会把消息送给错误的设备。
+    reported_id.as_deref() == Some(expected_id)
 }
 
 #[derive(Clone)]
@@ -116,14 +110,14 @@ impl PeerManager {
         let users = crate::db::get_all_users(pool).await?;
 
         let mut peers = self.peers.write().unwrap();
-        for (id, name, addr, _last_seen, is_offline, available_memory_mb) in users {
+        for (id, name, addr, _last_seen, _is_offline, _available_memory_mb) in users {
             let peer = Peer {
                 id: id.clone(),
                 name,
                 addr,
-                last_seen: _last_seen as u64,
-                is_offline,
-                available_memory_mb,
+                last_seen: 0,
+                is_offline: true,
+                available_memory_mb: 0,
                 notification_push_enabled: false,
                 notification_receive_enabled: false,
                 notification_push_target_device_ids: Vec::new(),
@@ -326,16 +320,16 @@ impl PeerManager {
         self.persistence.read().unwrap().clone()
     }
 
-    #[cfg(windows)]
     pub fn begin_presence_session(&self) {
         let mut peers = self.peers.write().unwrap();
+        #[cfg(windows)]
         if let Some(store) = self.persistence() {
             store.start_session();
-            for peer in peers.values_mut() {
-                peer.is_offline = true;
-                peer.last_seen = 0;
-                peer.available_memory_mb = 0;
-            }
+        }
+        for peer in peers.values_mut() {
+            peer.is_offline = true;
+            peer.last_seen = 0;
+            peer.available_memory_mb = 0;
         }
     }
 
@@ -569,6 +563,17 @@ mod presence_tests {
         }
         assert!(manager.peers.read().unwrap()["old"].is_offline);
         assert!(!manager.peers.read().unwrap()["current"].is_offline);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn open_port_without_matching_identity_is_not_online() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let router = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = crate::network::lan_http_client(Some(PRESENCE_PROBE_TIMEOUT)).unwrap();
+        assert!(!same_peer_reachable(&client, "old-device", &addr).await);
         server.abort();
     }
 }

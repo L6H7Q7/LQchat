@@ -3,14 +3,14 @@
 
 > Private LAN messaging, file transfer, and Android notification relay for Windows and Android. No account or cloud service required.
 >
-> 📖 [中文说明](README_CN.md) · [Download release v17](https://github.com/acclt/LQchat/releases/latest)
+> 📖 [中文说明](README_CN.md) · [Download release v18](https://github.com/acclt/LQchat/releases/latest)
 
 <p align="center">
   <img src="artifacts/0.2/device/windows-build1022-wide.jpg" width="68%" alt="LQChat Windows interface" />
   <img src="artifacts/0.2/device/home-build1022.png" width="27%" alt="LQChat Android interface" />
 </p>
 
-## Current Release: v17
+## Current Release: v18
 
 This fork continues [cap153/LANChat](https://github.com/cap153/LANChat) and is now centered on reliable Windows–Android use:
 
