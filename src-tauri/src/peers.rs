@@ -376,17 +376,32 @@ impl PeerManager {
         let candidates: Vec<Peer> = self.get_all_peers().into_iter()
             .filter(|peer| peer.is_offline)
             .collect();
+        let client = crate::network::lan_http_client(Some(PRESENCE_PROBE_TIMEOUT))?;
         let mut probes = FuturesUnordered::new();
         for peer in candidates {
+            let client = client.clone();
             probes.push(async move {
-                let reachable = !peer.addr.is_empty() && matches!(
-                    tokio::time::timeout(
-                        PRESENCE_PROBE_TIMEOUT,
-                        tokio::net::TcpStream::connect(&peer.addr),
-                    ).await,
-                    Ok(Ok(_))
-                );
-                (peer.id, reachable)
+                let reported_id = if peer.addr.is_empty() { None } else {
+                    match client.get(format!("http://{}/api/get_my_id", peer.addr)).send().await {
+                        Ok(response) if response.status().is_success() => response
+                            .json::<serde_json::Value>().await.ok()
+                            .and_then(|body| body.get("id")?.as_str().map(str::to_owned)),
+                        _ => None,
+                    }
+                };
+                // 同一个地址可能已被另一台（或重装后的）设备占用；必须比较设备 ID。
+                // 无法读取 ID 时保守地沿用 TCP 探测，避免误删仍在线的旧版客户端。
+                let same_device_reachable = match reported_id {
+                    Some(id) => id == peer.id,
+                    None => !peer.addr.is_empty() && matches!(
+                        tokio::time::timeout(
+                            PRESENCE_PROBE_TIMEOUT,
+                            tokio::net::TcpStream::connect(&peer.addr),
+                        ).await,
+                        Ok(Ok(_))
+                    ),
+                };
+                (peer.id, same_device_reachable)
             });
         }
         let mut removed = Vec::new();

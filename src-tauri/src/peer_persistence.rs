@@ -542,11 +542,35 @@ mod tests {
         let f = Fixture::new(false).await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
+        let router = axum::Router::new().route("/api/get_my_id", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({ "id": "reachable" }))
+        }));
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         f.manager.observe_discovery("reachable".into(), "暂未重发现".into(), addr, 256);
         f.manager.force_mark_offline("reachable");
         let removed = f.manager.clear_offline_peer_profiles(&f.pool).await.unwrap();
         assert!(removed.is_empty());
         assert!(f.manager.get_all_peers().iter().any(|peer| peer.id == "reachable"));
+    }
+
+    #[tokio::test]
+    async fn clearing_offline_profile_with_reused_address_checks_device_id() {
+        let f = Fixture::new(true).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let router = axum::Router::new().route("/api/get_my_id", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({ "id": "new-device" }))
+        }));
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        f.manager.observe_discovery("peer".into(), "旧设备".into(), addr.clone(), 256);
+        f.manager.force_mark_offline("peer");
+        f.manager.observe_discovery("new-device".into(), "5080".into(), addr, 256);
+        sqlx::query("INSERT INTO messages(id,sender_id,receiver_id) VALUES(1,'me','peer')")
+            .execute(&f.pool).await.unwrap();
+        let removed = f.manager.clear_offline_peer_profiles(&f.pool).await.unwrap();
+        assert_eq!(removed, vec!["peer"]);
+        assert!(f.manager.get_all_peers().iter().any(|peer| peer.id == "new-device"));
+        assert_eq!(f.count("messages").await, 1);
     }
 
     #[tokio::test]
