@@ -78,17 +78,11 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
     is_online: bool,
     pre_saved_msg_id: Option<i64>, // 消息已提前保存时传入（如 Android FD 缓存场景），不再新建
 ) -> Result<serde_json::Value, String> {
-    // 决定存入数据库的状态：如果离线，那就是 pending 且不用显示上传中
-    let overall_status = if is_online {
-        "sent".to_string()
-    } else {
-        "pending".to_string()
-    };
-    let file_status = if is_online {
-        "uploading".to_string()
-    } else {
-        "accepted".to_string()
-    };
+    if !is_online {
+        return Err("对方不在线".to_string());
+    }
+    let overall_status = "sent".to_string();
+    let file_status = "uploading".to_string();
 
     let message_id = if let Some(existing_id) = pre_saved_msg_id {
         Some(existing_id)
@@ -122,13 +116,6 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
         }
     }
 
-    if !is_online {
-        println!("[Command] 对方离线，文件保存为待上线");
-        return Ok(serde_json::json!({
-            "success": true, "file_name": file_name, "file_size": file_size,
-        }));
-    }
-
     // 获取自己的 ID（发送者 ID）
     let my_id = crate::db::get_user_id(&state.pool).await?;
 
@@ -149,12 +136,13 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
     let mut chunk_index = 0;
     let start_time = std::time::Instant::now();
 
-    loop {
+    while offset < file_size {
         // 读取分块
-        let mut buf = vec![0u8; adjusted_chunk_size];
+        let expected_len = adjusted_chunk_size.min(file_size - offset);
+        let mut buf = vec![0u8; expected_len];
         let mut bytes_read = 0;
 
-        while bytes_read < adjusted_chunk_size {
+        while bytes_read < expected_len {
             let n = match tokio::io::AsyncReadExt::read(&mut file, &mut buf[bytes_read..]).await {
                 Ok(n) => n,
                 Err(e) => {
@@ -176,12 +164,46 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
             bytes_read += n;
         }
 
-        if bytes_read == 0 {
-            break;
+        if bytes_read != expected_len {
+            if let Some(id) = message_id {
+                let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
+            }
+            let _ = app.emit("upload_progress", serde_json::json!({
+                "sender_msg_id": message_id, "transfer_status": "failed",
+                "transferred": offset, "total": file_size,
+            }));
+            return Err(format!("文件读取长度不符: 已读取 {bytes_read}/{expected_len} 字节"));
         }
 
-        buf.truncate(bytes_read);
         let n = bytes_read;
+
+        // 在最后一块发出前确认流已结束，避免接收端先标记完成而发送端随后发现多余数据。
+        if offset + n == file_size {
+            let mut extra = [0u8; 1];
+            match tokio::io::AsyncReadExt::read(&mut file, &mut extra).await {
+                Ok(0) => {}
+                Ok(_) => {
+                    if let Some(id) = message_id {
+                        let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
+                    }
+                    let _ = app.emit("upload_progress", serde_json::json!({
+                        "sender_msg_id": message_id, "transfer_status": "failed",
+                        "transferred": offset, "total": file_size,
+                    }));
+                    return Err("文件实际大小超过分享方提供的大小".to_string());
+                }
+                Err(error) => {
+                    if let Some(id) = message_id {
+                        let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
+                    }
+                    let _ = app.emit("upload_progress", serde_json::json!({
+                        "sender_msg_id": message_id, "transfer_status": "failed",
+                        "transferred": offset, "total": file_size,
+                    }));
+                    return Err(format!("确认文件结尾失败: {error}"));
+                }
+            }
+        }
 
         // 构造 multipart 请求
         // 计算当前累计速度（发送给接收端直接展示）
@@ -527,18 +549,7 @@ pub async fn send_message(
     }
 
     if is_offline_now {
-        println!(
-            "[Command] 用户 {} 处于离线记录中，直接保存为挂起状态",
-            peer_id
-        );
-        crate::db::save_text_message_with_status(
-            &state.pool,
-            peer_id,
-            content,
-            "pending".to_string(),
-        )
-        .await?;
-        return Ok(());
+        return Err("对方不在线".to_string());
     }
 
     // 3. 尝试发送（这同时也是一种探测）
@@ -558,19 +569,12 @@ pub async fn send_message(
         }
         Err(e) => {
             // 发送失败（探测到实际已离线或网络故障）
-            eprintln!("[Command] 发送失败(网络探测): {}. 消息将转入挂起队列。", e);
+            eprintln!("[Command] 发送失败(网络探测): {}", e);
 
             // 立即更新本地状态，避免下次发送再次空转
             peer_state.active_manager().force_mark_offline(&peer_id);
 
-            // 保存为挂起
-            crate::db::save_text_message_with_status(
-                &state.pool,
-                peer_id,
-                content,
-                "pending".to_string(),
-            )
-            .await?;
+            return Err("对方不在线".to_string());
         }
     }
 
@@ -679,26 +683,7 @@ pub async fn send_file(
     };
 
     if is_offline_now {
-        println!(
-            "[Command] 用户 {} 处于离线记录中，直接保存文件消息为挂起状态",
-            peer_id
-        );
-        crate::db::save_file_message(
-            &state.pool,
-            peer_id.clone(),
-            file_name.clone(),
-            file_size,
-            actual_path,
-            "pending".to_string(),
-            "pending".to_string(),
-        )
-        .await
-        .map_err(|e| format!("保存文件消息失败: {}", e))?;
-        return Ok(serde_json::json!({
-            "success": true,
-            "status": "pending",
-            "file_name": file_name,
-        }));
+        return Err("对方不在线".to_string());
     }
 
     // ── 检查接收端的 auto_download 设置 ──
@@ -1364,30 +1349,9 @@ pub async fn send_file_from_fd(
         };
 
         if is_offline_now {
-            println!(
-                "[Command] 用户 {} 处于离线记录中，直接保存文件消息为挂起状态",
-                peerId
-            );
-            // 将分享 FD 复制进应用私有 outbox，确保进程重启后仍可补发。
-            let persisted_path = persist_android_fd(&app, fd, &fileName).await?;
-            let msg_id = crate::db::save_file_message(
-                &state.pool,
-                peerId.clone(),
-                fileName.clone(),
-                fileSize,
-                persisted_path,
-                "pending".to_string(),
-                "pending".to_string(),
-            )
-            .await
-            .map_err(|e| format!("创建记录失败: {}", e))?;
-
-            return Ok(serde_json::json!({
-                "success": true,
-                "status": "pending",
-                "msg_id": msg_id,
-                "file_name": fileName,
-            }));
+            // JNI 已将原始 FD 的所有权交给 Rust；拒绝发送时也必须关闭。
+            drop(AndroidFile::from_fd(fd)?);
+            return Err("对方不在线".to_string());
         }
 
         // ── 1. 检查接收端的 auto_download 设置 ──
@@ -1409,6 +1373,13 @@ pub async fn send_file_from_fd(
                 Err(_) => true,
             }
         };
+
+        if !peer_state.active_manager().get_all_peers().iter()
+            .any(|peer| peer.id == peerId && !peer.is_offline)
+        {
+            drop(AndroidFile::from_fd(fd)?);
+            return Err("对方不在线".to_string());
+        }
 
         if !auto_enabled {
             // ── 自动下载关闭：先持久化，再发 file_offer ──
@@ -1484,15 +1455,33 @@ pub async fn send_file_from_fd(
             peerAddr
         };
 
+        if !is_online {
+            return Err("对方不在线".to_string());
+        }
+
         // 保存消息 + 缓存 FD，再上传
-        let overall_status = if is_online { "sent" } else { "pending" };
-        let file_path = originalUri.unwrap_or_else(|| format!("fd:{}", fd));
+        let overall_status = "sent";
+        let file_path = originalUri.clone().unwrap_or_else(|| format!("fd:{}", fd));
         let android_file = AndroidFile::from_fd(fd)?;
         let std_file = android_file.into_file();
-        let dup = std_file
-            .try_clone()
-            .map_err(|e| format!("FD 克隆失败: {}", e))?;
-        let file = tokio::fs::File::from_std(std_file);
+        // try_clone/dup 与原 FD 共用读取位置。文件卡片的可读性检查会 seek(0)，
+        // 因此上传必须从分享 URI 独立打开，不能从缓存 FD 克隆。
+        let source_uri = originalUri
+            .as_deref()
+            .filter(|uri| uri.starts_with("content://"))
+            .ok_or("分享文件缺少可独立打开的 content URI")?;
+        let upload_file = AndroidFile::from_content_uri(source_uri)
+            .map_err(|error| format!("无法独立打开分享文件: {error}"))?
+            .into_file();
+        if let Ok(metadata) = upload_file.metadata() {
+            if metadata.len() > 0 && metadata.len() != fileSize as u64 {
+                return Err(format!(
+                    "分享文件大小不一致: 声明 {fileSize} 字节，实际 {} 字节",
+                    metadata.len()
+                ));
+            }
+        }
+        let file = tokio::fs::File::from_std(upload_file);
 
         // 先存消息获取 msg_id
         let msg_id = crate::db::save_file_message(
@@ -1508,7 +1497,7 @@ pub async fn send_file_from_fd(
         .map_err(|e| format!("保存消息失败: {}", e))?;
 
         // 缓存 FD（用 msg_id 作为 key，供媒体服务器 /api/media 读取）
-        let raw_fd = dup.into_raw_fd();
+        let raw_fd = std_file.into_raw_fd();
         crate::android_fd::cache_fd_for_msg(msg_id, raw_fd, fileName.clone(), fileSize as u64);
 
         // 修正 DB 路径为 fd:{msg_id}

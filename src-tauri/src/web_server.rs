@@ -810,9 +810,15 @@ async fn send_message_http(
         }
     }
 
-    if is_online {
-        // 用户在线，尝试发送（这也是一种网络探测）
-        match crate::network::messaging::send_text_message(
+    if !is_online {
+        return (
+            StatusCode::CONFLICT,
+            Json(ErrorResponse { error: "对方不在线".to_string() }),
+        ).into_response();
+    }
+
+    // 用户在线，尝试发送（这也是一种网络探测）
+    match crate::network::messaging::send_text_message(
             &payload.peer_addr,
             my_id,
             my_name,
@@ -839,52 +845,17 @@ async fn send_message_http(
             }
             Err(e) => {
                 // 发送失败（探测到实际已离线或网络故障，比如 IP 刚变但心跳还没发）
-                eprintln!(
-                    "[Web Server] 发送失败(网络探测): {}. 消息将转入挂起队列。",
-                    e
-                );
+                eprintln!("[Web Server] 发送失败(网络探测): {}", e);
 
                 // 1. 立即更新 Web Server 内存中的状态，标记为离线
                 state.peer_manager.force_mark_offline(&payload.peer_id);
 
-                // 2. 保存为挂起状态 (pending)
-                if let Err(db_e) = crate::db::save_text_message_with_status(
-                    &state.pool,
-                    payload.peer_id.clone(),
-                    payload.content,
-                    "pending".to_string(),
-                )
-                .await
-                {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse { error: db_e }),
-                    )
-                        .into_response();
-                }
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ErrorResponse { error: "对方不在线".to_string() }),
+                ).into_response();
             }
         }
-    } else {
-        // 用户本来就在离线记录中，直接保存为挂起状态
-        println!(
-            "[Web Server] 用户 {} 离线，消息保存为挂起状态",
-            payload.peer_id
-        );
-        if let Err(e) = crate::db::save_text_message_with_status(
-            &state.pool,
-            payload.peer_id,
-            payload.content,
-            "pending".to_string(),
-        )
-        .await
-        {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-                .into_response();
-        }
-    }
 
     Json(serde_json::json!({ "success": true })).into_response()
 }
@@ -2751,15 +2722,18 @@ async fn create_upload_record_http(
         .iter()
         .any(|p| p.id == payload.receiver_id);
 
+    if !is_online {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "对方不在线"})),
+        ).into_response();
+    }
+
     let auto_dl = payload.auto_download.unwrap_or(true);
-    let (file_status, overall_status) = if is_online {
-        if auto_dl {
-            ("uploading".to_string(), "sent".to_string())
-        } else {
-            ("offering".to_string(), "sent".to_string())
-        }
+    let (file_status, overall_status) = if auto_dl {
+        ("uploading".to_string(), "sent".to_string())
     } else {
-        ("pending".to_string(), "pending".to_string())
+        ("offering".to_string(), "sent".to_string())
     };
 
     match crate::db::create_upload_record(

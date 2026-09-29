@@ -14,8 +14,8 @@ val tauriProperties = Properties().apply {
 }
 
 // 正式发布与 Windows 使用同一主版本；GitHub 标签使用整数序号。
-val lanchatAndroidVersionName = "18.0"
-val lanchatAndroidVersionCode = 1800
+val lanchatAndroidVersionName = "19.0"
+val lanchatAndroidVersionCode = 1900
 // Opt-in device contract tests must not replace the user's installed application or its data.
 val lanchatAcceptanceBuild = providers.gradleProperty("lanchatAcceptance").orNull == "true"
 

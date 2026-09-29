@@ -504,6 +504,7 @@ function initChat() {
 
   // 选择文件
   attachFileBtn.addEventListener("click", () => {
+    if (!ensureChatPeerOnline(window.currentChatPeer)) return;
     const tauri = window.__TAURI__;
     if (tauri) {
       // Android: 使用自定义 SAF 选择器（持久化权限）
@@ -550,6 +551,7 @@ function initChat() {
             showMessageActionToast("聊天对象已切换，请重新选择文件");
             return;
           }
+          if (!ensureChatPeerOnline(target.peer)) return;
           try {
             await apiSendFile(
               target.peer.id,
@@ -617,6 +619,14 @@ window.AndroidAppLoading = (() => {
 
 function copyChatPeer(peer = window.currentChatPeer) {
   return peer ? { id: peer.id, name: peer.name, addr: peer.addr } : null;
+}
+
+function ensureChatPeerOnline(peer) {
+  const item = peer && Array.from(document.querySelectorAll("#user-list li"))
+    .find((entry) => entry.dataset.id === peer.id);
+  if (item && !item.classList.contains("offline")) return true;
+  showMessageActionToast("对方不在线");
+  return false;
 }
 
 function captureChatTarget(peer = window.currentChatPeer) {
@@ -785,6 +795,7 @@ function openAndroidImagePreview(item) {
 
 async function openAndroidAttachment(kind, continueAdding = false) {
   if (!window.currentChatPeer) return;
+  if (!ensureChatPeerOnline(window.currentChatPeer)) return;
   const currentTarget = captureChatTarget();
   const targetChanged = androidAttachmentState.targetPeer?.id !== currentTarget.peer.id;
   if (targetChanged) clearAndroidAttachmentSelections();
@@ -829,6 +840,7 @@ async function sendAndroidSelectedAttachments() {
     showMessageActionToast("聊天对象已切换，请重新选择附件");
     return;
   }
+  if (!ensureChatPeerOnline(target.peer)) return;
   const items = Array.from(selected.values());
   selected.clear();
   updateAndroidComposerState();
@@ -845,14 +857,20 @@ async function sendAndroidAttachments(items, target) {
     showMessageActionToast("聊天对象已切换，请重新选择附件");
     return;
   }
+  if (!ensureChatPeerOnline(target.peer)) return;
   if (document.getElementById("chat-input")?.value.trim()) {
     await sendMessage(target.peer);
   }
   for (const item of items) {
+    if (!ensureChatPeerOnline(target.peer)) break;
     try {
       await apiSendFile(target.peer.id, target.peer.addr, null, item.uri);
     } catch (e) {
       console.error("[UI] 安卓附件发送失败:", item.name, e);
+      if (getActionErrorMessage(e).includes("对方不在线")) {
+        showMessageActionToast("对方不在线");
+        break;
+      }
       showMessageActionToast(`${item.name} 发送失败`, 3000);
     }
     try {
@@ -1113,6 +1131,7 @@ window.addEventListener("popstate", function (event) {
 // 发送消息
 async function sendMessage(targetPeer = window.currentChatPeer) {
   if (!targetPeer) return false;
+  if (!ensureChatPeerOnline(targetPeer)) return false;
 
   const chatInput = document.getElementById("chat-input");
   const draft = chatInput.value;
@@ -1144,7 +1163,8 @@ async function sendMessage(targetPeer = window.currentChatPeer) {
       chatInput.value = draft;
       chatInput.dispatchEvent(new Event("input", { bubbles: true }));
     }
-    showMessageActionToast("发送失败：" + getActionErrorMessage(e), 4000);
+    const reason = getActionErrorMessage(e);
+    showMessageActionToast(reason.includes("对方不在线") ? "对方不在线" : "发送失败：" + reason, 4000);
     return false;
   }
 }
@@ -1618,6 +1638,10 @@ function fileTransferLabel(status, isSent) {
 
 function showFileSendFailure(error, fileName = "") {
   const reason = getActionErrorMessage(error);
+  if (reason.includes("对方不在线")) {
+    showMessageActionToast("对方不在线");
+    return;
+  }
   // 分块失败已写入对应文件消息；不再叠加全局提示。
   if (/上传分块失败|分块错误/.test(reason)) return;
   showMessageActionToast(`${fileName ? fileName + " " : ""}文件发送失败：${reason}`, 4000);
@@ -1833,9 +1857,11 @@ function createMessageElement(message, isSent) {
       };
 
       renderAndroidFileState(message.file_status === "deleted" ? "DELETED" : "UNKNOWN");
-      refreshAndroidFileState().catch((error) => {
-        console.warn("[UI] 检查 Android 文件状态失败:", error);
-      });
+      if (!["uploading", "retrying"].includes(message.file_status)) {
+        refreshAndroidFileState().catch((error) => {
+          console.warn("[UI] 检查 Android 文件状态失败:", error);
+        });
+      }
     }
 
     const ensureAndroidFileAvailable = async () => {
@@ -2455,6 +2481,7 @@ function onReceiveMessage(message) {
 async function sendFileByPath(filePath, targetPeer = window.currentChatPeer) {
   const target = captureChatTarget(targetPeer);
   if (!target) return;
+  if (!ensureChatPeerOnline(target.peer)) return;
   const tauri = window.__TAURI__;
   if (!tauri) return;
 
@@ -2484,6 +2511,7 @@ async function sendFileByPath(filePath, targetPeer = window.currentChatPeer) {
 async function sendFile(file, targetPeer = window.currentChatPeer) {
   const target = captureChatTarget(targetPeer);
   if (!target) return;
+  if (!ensureChatPeerOnline(target.peer)) return;
 
   const tauri = window.__TAURI__;
 

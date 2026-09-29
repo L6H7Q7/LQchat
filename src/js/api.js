@@ -428,11 +428,11 @@ async function apiSendFile(peerId, peerAddr, file, filePath) {
       }),
     });
     const createData = await createResp.json();
-    if (!createData.success) throw new Error("创建记录失败");
+    if (!createData.success) throw new Error(createData.error || "创建记录失败");
 
     const msgId = createData.msg_id;
 
-    // 保存 File 引用（供重试 / 离线补发 / 手动下载）
+    // 保存 File 引用（供接收端关闭自动下载时的手动下载使用）
     if (!window.__pendingUploads) window.__pendingUploads = {};
     window.__pendingUploads[msgId] = {
       file,
@@ -442,15 +442,10 @@ async function apiSendFile(peerId, peerAddr, file, filePath) {
       fileSize,
     };
 
-    // 后端根据 peer_manager 判断在线状态，返回 is_online 和对应的 file_status
+    // 后端根据 peer_manager 判断在线状态；离线不会创建记录。
     if (!createData.is_online) {
-      // 离线：记录已保存为 pending，等待上线后 resend_pending_messages 补发
-      return {
-        success: true,
-        status: "pending",
-        msg_id: msgId,
-        file_name: fileName,
-      };
+      delete window.__pendingUploads[msgId];
+      throw new Error("对方不在线");
     }
 
     if (createData.file_status === "offering") {

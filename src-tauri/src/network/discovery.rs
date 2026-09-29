@@ -266,29 +266,6 @@ pub async fn run_listener(
             .map_err(|error| format!("保存发现设备失败: {error}"))?;
         }
 
-        if connection_transition.is_connected() {
-            let resend_pool = pool.clone();
-            let resend_peer_id = peer_id.clone();
-            let resend_peer_addr = peer_addr.clone();
-            let resend_bus = event_bus.clone();
-            let resend_cancellation = cancellation.child_token();
-            tokio::spawn(async move {
-                if resend_cancellation.is_cancelled() {
-                    return;
-                }
-                if let Err(error) = crate::network::messaging::resend_pending_messages(
-                    &resend_pool,
-                    &resend_peer_id,
-                    &resend_peer_addr,
-                    resend_bus,
-                )
-                .await
-                {
-                    eprintln!("[UDP] 补发消息失败: {error}");
-                }
-            });
-        }
-
         let mut event = serde_json::json!({
             "id": peer_id,
             "name": name,

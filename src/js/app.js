@@ -451,6 +451,8 @@ function cancelShareDialog() {
 async function handleShareToUser(userId, userName, userAddr, sharedFiles) {
   console.log("[JS-App] 分享文件到:", userName);
 
+  if (!ensureChatPeerOnline({ id: userId })) return;
+
   // 用户确认发送，前端立刻交出 FD 的管理权！
   // 这样无论后续弹窗怎么销毁，前端都不会再去误杀这些 FD，后端的 Rust 拿到 FD 传完会自动释放
   window.__ANDROID_SHARED_FILES__ = null;
