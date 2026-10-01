@@ -787,12 +787,20 @@ function renderAndroidAttachmentPanel() {
 }
 
 function openAndroidImagePreview(item) {
-  if (!item.thumbnail) return;
+  if (!item.thumbnail || document.querySelector(".android-image-preview")) return;
   const overlay = document.createElement("div");
   overlay.className = "android-image-preview";
   overlay.innerHTML = `<button type="button" aria-label="关闭预览">×</button><img alt="图片预览">`;
   overlay.querySelector("img").src = item.thumbnail;
-  overlay.addEventListener("click", () => overlay.remove());
+  let closing = false;
+  overlay.addEventListener("click", () => {
+    if (closing) return;
+    closing = true;
+    window.history.back();
+  });
+  // 沿用原生返回处理已识别的附件路由，用独立历史项承载预览层。
+  // 返回后先关闭预览，保留下面的附件面板和聊天状态。
+  window.history.pushState({ androidImagePreview: true }, "", "#chat-attachment");
   document.body.appendChild(overlay);
 }
 
@@ -1053,6 +1061,11 @@ function updateListHighlight(activeId) {
 
 // 5. 全局监听器:处理物理返回键和手动后退
 window.addEventListener("popstate", function (event) {
+  const imagePreview = document.querySelector(".android-image-preview");
+  if (imagePreview && !event.state?.androidImagePreview) {
+    imagePreview.remove();
+    return;
+  }
   if (document.body.classList.contains("android-app") &&
       ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#background-options", "#download-options"].includes(location.hash)) return;
   const chatContainer = document.getElementById("chat-container");
