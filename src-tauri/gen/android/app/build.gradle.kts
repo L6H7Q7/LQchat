@@ -21,6 +21,7 @@ val lanchatAcceptanceBuild = providers.gradleProperty("lanchatAcceptance").orNul
 
 android {
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
     namespace = "com.lanchat.app"
     if (lanchatAcceptanceBuild) {
         sourceSets.getByName("debug").res.srcDir("src/acceptance/res")

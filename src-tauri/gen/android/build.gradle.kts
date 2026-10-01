@@ -20,3 +20,12 @@ tasks.register("clean").configure {
     delete("build")
 }
 
+
+// Keep all Android library modules on the same installed Build Tools version.
+subprojects {
+    plugins.withId("com.android.library") {
+        extensions.configure<com.android.build.gradle.LibraryExtension> {
+            buildToolsVersion = "36.0.0"
+        }
+    }
+}

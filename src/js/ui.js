@@ -683,18 +683,21 @@ function updateAndroidAttachmentMeta() {
   const count = androidAttachmentState.selected[kind].size;
   document.getElementById("android-attachment-title").textContent = labels[kind];
   document.getElementById("android-attachment-count").textContent = `已选 ${count} 项`;
-  const send = document.getElementById("android-send-attachments");
-  send.textContent = `发送 (${count})`;
-  send.disabled = count === 0;
   updateAndroidComposerState();
 }
 
 function updateAndroidComposerState() {
-  if (!isAndroidApp()) return;
+  if (!isAndroidApp() || window.selectMode?.active) return;
   const hasText = !!document.getElementById("chat-input")?.value.trim();
-  const hasAttachments = ["image", "file", "app"].some((kind) => androidAttachmentState.selected[kind].size > 0);
+  const kind = androidAttachmentState.kind;
+  const count = kind === "image" || kind === "app"
+    ? androidAttachmentState.selected[kind].size
+    : 0;
   const send = document.getElementById("send-btn");
-  if (send) send.disabled = !hasText && !hasAttachments;
+  if (send) {
+    send.textContent = count > 0 ? `发送（${count}）` : t("send");
+    send.disabled = !hasText && count === 0;
+  }
 }
 
 function renderAndroidAttachmentPanel() {
@@ -793,17 +796,16 @@ function openAndroidImagePreview(item) {
   document.body.appendChild(overlay);
 }
 
-async function openAndroidAttachment(kind, continueAdding = false) {
+async function openAndroidAttachment(kind) {
   if (!window.currentChatPeer) return;
   if (!ensureChatPeerOnline(window.currentChatPeer)) return;
   const currentTarget = captureChatTarget();
   const targetChanged = androidAttachmentState.targetPeer?.id !== currentTarget.peer.id;
   if (targetChanged) clearAndroidAttachmentSelections();
-  if (!continueAdding || targetChanged || !androidAttachmentState.targetPeer) {
-    androidAttachmentState.targetPeer = currentTarget.peer;
-    androidAttachmentState.targetSession = currentTarget.session;
-  }
+  androidAttachmentState.targetPeer = currentTarget.peer;
+  androidAttachmentState.targetSession = currentTarget.session;
   androidAttachmentState.kind = kind;
+  updateAndroidComposerState();
   const tauri = window.__TAURI__;
   if (kind === "file") {
     if (!tauri) return;
@@ -813,9 +815,9 @@ async function openAndroidAttachment(kind, continueAdding = false) {
   setAndroidAttachmentPanel(true);
   renderAndroidAttachmentPanel();
   if (!tauri) return;
-  if (kind === "image" && (!androidAttachmentState.images.length || !continueAdding)) {
+  if (kind === "image") {
     await tauri.core.invoke("load_android_media_images").catch((e) => console.error("[UI] 相册读取失败:", e));
-  } else if (kind === "app" && (!androidAttachmentState.apps.length || !continueAdding)) {
+  } else if (kind === "app") {
     androidAttachmentState.appsLoaded = false;
     androidAttachmentState.appsLoadError = "";
     await window.AndroidAppLoading.show("send-app");
@@ -902,8 +904,6 @@ function initAndroidAttachmentPicker() {
     if (location.hash === "#chat-attachment") history.back();
     else setAndroidAttachmentPanel(false);
   });
-  document.getElementById("android-send-attachments")?.addEventListener("click", sendAndroidSelectedAttachments);
-  document.getElementById("android-continue-add")?.addEventListener("click", () => openAndroidAttachment(androidAttachmentState.kind, true));
 
   window.addEventListener("android-files-selected", (event) => {
     const target = {
@@ -1096,6 +1096,7 @@ window.addEventListener("popstate", function (event) {
 
     if (chatInput) chatInput.disabled = false;
     if (attachFileBtn) attachFileBtn.disabled = false;
+    updateAndroidComposerState();
 
     const messages = document.querySelectorAll(".message");
     messages.forEach((msg) => {
