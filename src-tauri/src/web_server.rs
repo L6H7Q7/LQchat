@@ -571,7 +571,16 @@ async fn upload_to_receiver(
     // 获取自己的 ID
     let my_id = crate::db::get_user_id(_pool).await.unwrap_or_default();
 
-    let file_size = _file_size;
+    let file_size = match file.metadata().await
+        .map_err(|error| format!("读取文件信息失败: {error}"))
+        .and_then(|metadata| crate::file_source::size_from_metadata(&metadata, _file_size)) {
+        Ok(size) => size,
+        Err(error) => { eprintln!("[WebServer] {error}"); return false; }
+    };
+    if let Err(error) = crate::db::update_sent_file_size(_pool, _sender_msg_id, file_size).await {
+        eprintln!("[WebServer] {error}");
+        return false;
+    }
     let file_name = _file_name.to_string();
     let peer_addr = _receiver_addr.to_string();
 
@@ -592,27 +601,15 @@ async fn upload_to_receiver(
     };
     let upload_url = format!("http://{}/api/upload", peer_addr);
 
-    loop {
-        let mut buf = vec![0u8; chunk_size];
-        let mut bytes_read = 0usize;
-        while bytes_read < chunk_size {
-            let n = match tokio::io::AsyncReadExt::read(&mut reader, &mut buf[bytes_read..]).await {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(error) => {
-                    eprintln!("[WebServer] 读取文件失败: {error}");
-                    return false;
-                }
-            };
-            bytes_read += n;
-            if n == 0 {
-                break;
-            }
-        }
-        if bytes_read == 0 {
-            break;
-        }
-        buf.truncate(bytes_read);
+    while offset < file_size {
+        let expected = chunk_size.min(file_size - offset);
+        let buf = match crate::file_source::read_upload_chunk(
+            &mut reader, expected, offset + expected == file_size,
+        ).await {
+            Ok(buf) => buf,
+            Err(error) => { eprintln!("[WebServer] {error}"); return false; }
+        };
+        let bytes_read = buf.len();
 
         let speed_mb_s = if chunk_index > 0 {
             let elapsed = start_time.elapsed().as_secs_f64();
@@ -1884,6 +1881,7 @@ async fn upload_file_http(
                     &sender_id,
                     &file_name,
                     &stored_path,
+                    file_size,
                 )
                 .await
                 .unwrap_or(None);
@@ -2176,6 +2174,7 @@ async fn upload_file_http(
             &sender_id,
             &final_file_name,
             &file_path,
+            file_size,
         )
         .await
         .unwrap_or(None);

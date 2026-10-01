@@ -137,73 +137,25 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
     let start_time = std::time::Instant::now();
 
     while offset < file_size {
-        // 读取分块
+        // 在最后一块发出前确认流结束，接收端不会先把截断文件标记完成。
         let expected_len = adjusted_chunk_size.min(file_size - offset);
-        let mut buf = vec![0u8; expected_len];
-        let mut bytes_read = 0;
-
-        while bytes_read < expected_len {
-            let n = match tokio::io::AsyncReadExt::read(&mut file, &mut buf[bytes_read..]).await {
-                Ok(n) => n,
-                Err(e) => {
-                    if let Some(id) = message_id {
-                        let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
-                    }
-                    let _ = app.emit("upload_progress", serde_json::json!({
-                        "sender_msg_id": message_id, "transfer_status": "failed",
-                        "transferred": offset, "total": file_size,
-                    }));
-                    return Err(format!("读取文件失败: {}", e));
+        let buf = match crate::file_source::read_upload_chunk(
+            &mut file, expected_len, offset + expected_len == file_size,
+        ).await {
+            Ok(buf) => buf,
+            Err(error) => {
+                eprintln!("[Command] 文件读取失败: {error}");
+                if let Some(id) = message_id {
+                    let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
                 }
-            };
-
-            if n == 0 {
-                break;
+                let _ = app.emit("upload_progress", serde_json::json!({
+                    "sender_msg_id": message_id, "transfer_status": "failed",
+                    "transferred": offset, "total": file_size,
+                }));
+                return Err(error);
             }
-
-            bytes_read += n;
-        }
-
-        if bytes_read != expected_len {
-            if let Some(id) = message_id {
-                let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
-            }
-            let _ = app.emit("upload_progress", serde_json::json!({
-                "sender_msg_id": message_id, "transfer_status": "failed",
-                "transferred": offset, "total": file_size,
-            }));
-            return Err(format!("文件读取长度不符: 已读取 {bytes_read}/{expected_len} 字节"));
-        }
-
-        let n = bytes_read;
-
-        // 在最后一块发出前确认流已结束，避免接收端先标记完成而发送端随后发现多余数据。
-        if offset + n == file_size {
-            let mut extra = [0u8; 1];
-            match tokio::io::AsyncReadExt::read(&mut file, &mut extra).await {
-                Ok(0) => {}
-                Ok(_) => {
-                    if let Some(id) = message_id {
-                        let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
-                    }
-                    let _ = app.emit("upload_progress", serde_json::json!({
-                        "sender_msg_id": message_id, "transfer_status": "failed",
-                        "transferred": offset, "total": file_size,
-                    }));
-                    return Err("文件实际大小超过分享方提供的大小".to_string());
-                }
-                Err(error) => {
-                    if let Some(id) = message_id {
-                        let _ = crate::db::update_file_status_by_id(&state.pool, id, "failed").await;
-                    }
-                    let _ = app.emit("upload_progress", serde_json::json!({
-                        "sender_msg_id": message_id, "transfer_status": "failed",
-                        "transferred": offset, "total": file_size,
-                    }));
-                    return Err(format!("确认文件结尾失败: {error}"));
-                }
-            }
-        }
+        };
+        let n = buf.len();
 
         // 构造 multipart 请求
         // 计算当前累计速度（发送给接收端直接展示）
@@ -686,6 +638,17 @@ pub async fn send_file(
         return Err("对方不在线".to_string());
     }
 
+    // 大小以本次打开的文件为准，媒体库 _size 仅作提示。保留同一个上传句柄。
+    #[cfg(target_os = "android")]
+    let prepared_content = if actual_path.starts_with("content://") {
+        let source = crate::android_fd::AndroidFile::from_content_uri(&actual_path)?.into_file();
+        let size = crate::file_source::size_from_metadata(&source.metadata()
+            .map_err(|error| format!("读取文件信息失败: {error}"))?, file_size)?;
+        Some((tokio::fs::File::from_std(source), size))
+    } else { None };
+    #[cfg(target_os = "android")]
+    let file_size = prepared_content.as_ref().map(|(_, size)| *size).unwrap_or(file_size);
+
     // ── 检查接收端的 auto_download 设置 ──
     let auto_enabled = {
         let auto_dl_url = format!("http://{}/api/auto_download", peer_addr);
@@ -769,6 +732,7 @@ pub async fn send_file(
                             raw_fd,
                             file_name.clone(),
                             file_size as u64,
+                            actual_path.clone(),
                         );
                         // 更新 DB 文件路径为 "fd:{msg_id}" 标记，让 file_request 走 FD 缓存
                         let _ = crate::db::update_file_path_by_id(
@@ -819,11 +783,7 @@ pub async fn send_file(
         #[cfg(target_os = "android")]
         {
             println!("[Command] 检测到 Android content URI，使用 FD 方式");
-            use crate::android_fd::AndroidFile;
-
-            let android_file = AndroidFile::from_content_uri(&actual_path)?;
-            let std_file = android_file.into_file();
-            let file = tokio::fs::File::from_std(std_file);
+            let (file, file_size) = prepared_content.ok_or("未打开 content URI 文件")?;
 
             let peer_state = app.try_state::<PeerState>();
             let (is_online, backend_addr) = peer_state
@@ -873,6 +833,8 @@ pub async fn send_file(
         .await
         .map_err(|e| format!("打开文件失败: {}", e))?;
 
+    let file_size = crate::file_source::size_from_metadata(&file.metadata().await
+        .map_err(|error| format!("读取文件信息失败: {error}"))?, file_size)?;
     let peer_state = app.try_state::<PeerState>();
     let (is_online, backend_addr) = peer_state
         .as_ref()
@@ -1281,10 +1243,9 @@ pub fn get_local_device_info() -> serde_json::Value {
 #[cfg(target_os = "android")]
 async fn persist_android_fd(
     app: &tauri::AppHandle,
-    fd: i32,
+    source: std::fs::File,
     file_name: &str,
-) -> Result<String, String> {
-    use crate::android_fd::AndroidFile;
+) -> Result<(String, usize), String> {
     let safe_name: String = file_name
         .chars()
         .map(|ch| {
@@ -1304,15 +1265,17 @@ async fn persist_android_fd(
         .await
         .map_err(|e| format!("创建离线附件目录失败: {}", e))?;
     let target = outbox.join(format!("{}_{}", uuid::Uuid::new_v4(), safe_name));
-    let source = AndroidFile::from_fd(fd)?.into_file();
     let mut source = tokio::fs::File::from_std(source);
     let mut destination = tokio::fs::File::create(&target)
         .await
         .map_err(|e| format!("创建离线附件副本失败: {}", e))?;
-    tokio::io::copy(&mut source, &mut destination)
+    let size = tokio::io::copy(&mut source, &mut destination)
         .await
         .map_err(|e| format!("保存离线附件失败: {}", e))?;
-    Ok(target.to_string_lossy().to_string())
+    tokio::io::AsyncWriteExt::flush(&mut destination).await
+        .map_err(|e| format!("保存离线附件失败: {e}"))?;
+    Ok((target.to_string_lossy().to_string(), usize::try_from(size)
+        .map_err(|_| "文件过大，无法发送".to_string())?))
 }
 
 #[tauri::command]
@@ -1337,6 +1300,8 @@ pub async fn send_file_from_fd(
     {
         use crate::android_fd::AndroidFile;
         use std::os::unix::io::IntoRawFd;
+        // 接管 JNI 传入句柄；所有拒绝或失败路径都会自动关闭。
+        let std_file = AndroidFile::from_fd(fd)?.into_file();
 
         // ── 检查接收端是否离线 ──
         let is_offline_now = {
@@ -1350,7 +1315,6 @@ pub async fn send_file_from_fd(
 
         if is_offline_now {
             // JNI 已将原始 FD 的所有权交给 Rust；拒绝发送时也必须关闭。
-            drop(AndroidFile::from_fd(fd)?);
             return Err("对方不在线".to_string());
         }
 
@@ -1377,18 +1341,17 @@ pub async fn send_file_from_fd(
         if !peer_state.active_manager().get_all_peers().iter()
             .any(|peer| peer.id == peerId && !peer.is_offline)
         {
-            drop(AndroidFile::from_fd(fd)?);
             return Err("对方不在线".to_string());
         }
 
         if !auto_enabled {
             // ── 自动下载关闭：先持久化，再发 file_offer ──
-            let persisted_path = persist_android_fd(&app, fd, &fileName).await?;
+            let (persisted_path, file_size) = persist_android_fd(&app, std_file, &fileName).await?;
             let sender_msg_id = crate::db::save_file_message(
                 &state.pool,
                 peerId.clone(),
                 fileName.clone(),
-                fileSize,
+                file_size,
                 persisted_path,
                 "offering".to_string(),
                 "sent".to_string(),
@@ -1409,7 +1372,7 @@ pub async fn send_file_from_fd(
                 "from_id": my_id,
                 "from_name": my_name,
                 "file_name": fileName,
-                "file_size": fileSize,
+                "file_size": file_size,
                 "sender_msg_id": sender_msg_id,
             });
             let _ =
@@ -1462,8 +1425,6 @@ pub async fn send_file_from_fd(
         // 保存消息 + 缓存 FD，再上传
         let overall_status = "sent";
         let file_path = originalUri.clone().unwrap_or_else(|| format!("fd:{}", fd));
-        let android_file = AndroidFile::from_fd(fd)?;
-        let std_file = android_file.into_file();
         // try_clone/dup 与原 FD 共用读取位置。文件卡片的可读性检查会 seek(0)，
         // 因此上传必须从分享 URI 独立打开，不能从缓存 FD 克隆。
         let source_uri = originalUri
@@ -1473,14 +1434,8 @@ pub async fn send_file_from_fd(
         let upload_file = AndroidFile::from_content_uri(source_uri)
             .map_err(|error| format!("无法独立打开分享文件: {error}"))?
             .into_file();
-        if let Ok(metadata) = upload_file.metadata() {
-            if metadata.len() > 0 && metadata.len() != fileSize as u64 {
-                return Err(format!(
-                    "分享文件大小不一致: 声明 {fileSize} 字节，实际 {} 字节",
-                    metadata.len()
-                ));
-            }
-        }
+        let file_size = crate::file_source::size_from_metadata(&upload_file.metadata()
+            .map_err(|error| format!("读取分享文件信息失败: {error}"))?, fileSize)?;
         let file = tokio::fs::File::from_std(upload_file);
 
         // 先存消息获取 msg_id
@@ -1488,7 +1443,7 @@ pub async fn send_file_from_fd(
             &state.pool,
             peerId.clone(),
             fileName.clone(),
-            fileSize,
+            file_size,
             file_path,
             "uploading".to_string(),
             overall_status.to_string(),
@@ -1498,7 +1453,7 @@ pub async fn send_file_from_fd(
 
         // 缓存 FD（用 msg_id 作为 key，供媒体服务器 /api/media 读取）
         let raw_fd = std_file.into_raw_fd();
-        crate::android_fd::cache_fd_for_msg(msg_id, raw_fd, fileName.clone(), fileSize as u64);
+        crate::android_fd::cache_fd_for_msg(msg_id, raw_fd, fileName.clone(), file_size as u64, source_uri.to_string());
 
         // 修正 DB 路径为 fd:{msg_id}
         let corrected = format!("fd:{}", msg_id);
@@ -1513,7 +1468,7 @@ pub async fn send_file_from_fd(
             peerId,
             peer_addr,
             fileName.clone(),
-            fileSize,
+            file_size,
             format!("fd:{}", msg_id),
             file,
             is_online,

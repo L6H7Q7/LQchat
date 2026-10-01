@@ -471,6 +471,7 @@ pub async fn get_chat_history_with_offset(
 pub const FILE_TRANSFER_CHUNK_SIZE: usize = 10 * 1024 * 1024;
 
 async fn resend_file_background(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
     my_id: &str,
     peer_addr: &str,
     file_name: &str,
@@ -511,6 +512,10 @@ async fn resend_file_background(
 
     let client = crate::network::lan_http_client(Some(std::time::Duration::from_secs(300)))?;
 
+    let file_size = crate::file_source::size_from_metadata(&file.metadata().await
+        .map_err(|error| format!("读取补发文件信息失败: {error}"))?,
+        usize::try_from(file_size).unwrap_or(0))? as i64;
+    crate::db::update_sent_file_size(pool, msg_id, file_size as usize).await?;
     let upload_url = format!("http://{}/api/upload", peer_addr);
     let chunk_size = FILE_TRANSFER_CHUNK_SIZE as i64;
     let total_chunks = (file_size + chunk_size - 1) / chunk_size;
@@ -518,22 +523,12 @@ async fn resend_file_background(
     let mut chunk_index = 0;
     let start_time = std::time::Instant::now();
 
-    loop {
-        let mut buf = vec![0u8; chunk_size as usize];
-        let mut bytes_read = 0;
-        while bytes_read < chunk_size as usize {
-            use tokio::io::AsyncReadExt;
-            let n = file.read(&mut buf[bytes_read..]).await
-                .map_err(|e| format!("读取补发文件失败: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            bytes_read += n;
-        }
-        if bytes_read == 0 {
-            break;
-        }
-        buf.truncate(bytes_read);
+    while offset < file_size {
+        let expected = chunk_size.min(file_size - offset) as usize;
+        let buf = crate::file_source::read_upload_chunk(
+            &mut file, expected, offset + expected as i64 == file_size,
+        ).await?;
+        let bytes_read = buf.len();
 
         let form = reqwest::multipart::Form::new()
             .text("peer_id", my_id.to_string())
@@ -660,6 +655,7 @@ pub async fn resend_pending_messages(
                                     "file_status": "retrying", "total": size,
                                 }));
                                 match resend_file_background(
+                                    pool,
                                     &my_id, peer_addr, &content, path, size, msg_id, &event_bus,
                                 )
                                 .await

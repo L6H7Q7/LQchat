@@ -1442,6 +1442,7 @@ pub async fn find_and_update_offered_record(
     sender_id: &str,
     file_name: &str,
     file_path: &str,
+    file_size: u64,
 ) -> Result<Option<(i64, String)>, String> {
     // 查找 sender_id + file_name 匹配且 file_status = 'offered' 的记录，获取 id 和 sender_msg_id
     let result = sqlx::query_as::<_, (i64, String)>(
@@ -1454,8 +1455,9 @@ pub async fn find_and_update_offered_record(
     .map_err(|e| format!("查询 offered 记录失败: {}", e))?;
 
     if let Some((msg_id, sender_msg_id)) = result {
-        sqlx::query("UPDATE messages SET file_status = 'downloading', file_path = ? WHERE id = ?")
+        sqlx::query("UPDATE messages SET file_status = 'downloading', file_path = ?, file_size = ? WHERE id = ?")
             .bind(file_path)
+            .bind(i64::try_from(file_size).map_err(|_| "文件过大".to_string())?)
             .bind(msg_id)
             .execute(pool)
             .await
@@ -1656,5 +1658,37 @@ mod windows_portable_tests {
 
         pool.close().await;
         std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+/// 上传前同步本次打开文件的大小，避免旧媒体库信息进入重试与文件卡片。
+pub async fn update_sent_file_size(pool: &sqlx::Pool<sqlx::Sqlite>, msg_id: i64, size: usize) -> Result<(), String> {
+    sqlx::query("UPDATE messages SET file_size = ? WHERE id = ? AND sender_id = 'me'")
+        .bind(i64::try_from(size).map_err(|_| "文件过大".to_string())?)
+        .bind(msg_id).execute(pool).await
+        .map_err(|error| format!("更新文件大小失败: {error}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod file_size_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reopened_source_size_updates_sender_and_existing_receiver_offer() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE messages (id INTEGER PRIMARY KEY, sender_id TEXT, content TEXT, file_size INTEGER, file_path TEXT, file_status TEXT, sender_msg_id TEXT)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO messages VALUES (1, 'me', 'photo.jpg', 10476447, 'content://photo', 'failed', '1'), (2, 'phone', 'photo.jpg', 10476447, '', 'offered', '1')")
+            .execute(&pool).await.unwrap();
+        update_sent_file_size(&pool, 1, 2559098).await.unwrap();
+        assert_eq!(find_and_update_offered_record(&pool, "phone", "photo.jpg", "/photo.jpg", 2559098).await.unwrap(), Some((2, "1".to_string())));
+        let rows: Vec<(i64, String)> = sqlx::query_as("SELECT file_size, file_status FROM messages ORDER BY id")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(rows, vec![(2559098, "failed".to_string()), (2559098, "downloading".to_string())]);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 2);
+        pool.close().await;
     }
 }

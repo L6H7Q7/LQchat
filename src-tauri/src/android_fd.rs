@@ -62,7 +62,7 @@ pub fn initialize_service_context(
 }
 
 #[cfg(target_os = "android")]
-type FdCacheEntry = (RawFd, String, u64); // (raw_fd, file_name, file_size)
+type FdCacheEntry = (RawFd, String, u64, String); // (raw_fd, file_name, file_size, source_uri)
 
 #[cfg(target_os = "android")]
 const FD_CACHE_MAX: usize = 30;
@@ -77,7 +77,7 @@ fn fd_cache() -> &'static Mutex<HashMap<i64, FdCacheEntry>> {
 /// 在 msg_id 已知后调用，将 FD 与 msg_id 绑定。
 /// 超过 FD_CACHE_MAX 则 FIFO 淘汰最老的。
 #[cfg(target_os = "android")]
-pub fn cache_fd_for_msg(msg_id: i64, fd: RawFd, name: String, size: u64) {
+pub fn cache_fd_for_msg(msg_id: i64, fd: RawFd, name: String, size: u64, source_uri: String) {
     let mut cache = fd_cache().lock().unwrap();
 
     // FIFO: 超出上限则淘汰最老的
@@ -86,7 +86,7 @@ pub fn cache_fd_for_msg(msg_id: i64, fd: RawFd, name: String, size: u64) {
         // 近似 FIFO：取任意一条清理（实践中谁先被 iterate 到就清谁）
         let oldest = cache.keys().next().copied();
         if let Some(old_id) = oldest {
-            if let Some((old_fd, _, _)) = cache.remove(&old_id) {
+            if let Some((old_fd, _, _, _)) = cache.remove(&old_id) {
                 // 关闭 FD 释放内核资源
                 unsafe { std::fs::File::from_raw_fd(old_fd) };
             }
@@ -95,7 +95,9 @@ pub fn cache_fd_for_msg(msg_id: i64, fd: RawFd, name: String, size: u64) {
         }
     }
 
-    cache.insert(msg_id, (fd, name, size));
+    if let Some((old_fd, _, _, _)) = cache.insert(msg_id, (fd, name, size, source_uri)) {
+        unsafe { std::fs::File::from_raw_fd(old_fd) };
+    }
     println!(
         "[AndroidFD] FD 已缓存: msg_id={}, fd={} (cache_size={})",
         msg_id,
@@ -104,46 +106,34 @@ pub fn cache_fd_for_msg(msg_id: i64, fd: RawFd, name: String, size: u64) {
     );
 }
 
-/// 从 FD 缓存中克隆一个文件对象（通过 try_clone / dup 系统调用），
+/// 使用缓存中的 URI 独立打开文件对象，避免共享 FD 游标，
 /// 不消耗原始 FD，支持多次重试调用。
 /// 返回 (tokio::fs::File, file_name, file_size)。
 #[cfg(target_os = "android")]
 pub fn duplicate_cached_file(msg_id: i64) -> Option<(tokio::fs::File, String, u64)> {
-    use std::io::Seek;
     use std::mem::ManuallyDrop;
-    use std::os::unix::io::FromRawFd;
-
-    let cache = fd_cache().lock().unwrap();
-    if let Some((raw_fd, name, size)) = cache.get(&msg_id) {
-        // ManuallyDrop 包裹：借用原始 FD 包装为 File，但绝不 close 它
-        let mut original = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(*raw_fd) });
-
-        // 重置游标到起点（共享游标，每次克隆前必须 seek）
-        if let Err(e) = original.seek(std::io::SeekFrom::Start(0)) {
-            eprintln!("[AndroidFD] 警告: seek(0) 失败: {}", e);
-        }
-
-        // try_clone → 底层 fcntl(F_DUPFD_CLOEXEC)，纯内存复制 FD，绕过路径权限检查
-        match original.try_clone() {
-            Ok(cloned) => {
-                println!(
-                    "[AndroidFD] FD 克隆成功 (try_clone): msg_id={}, raw_fd={}",
-                    msg_id, raw_fd
-                );
-                Some((tokio::fs::File::from_std(cloned), name.clone(), *size))
-            }
-            Err(e) => {
-                eprintln!(
-                    "[AndroidFD] FD try_clone 失败: msg_id={}, err={}",
-                    msg_id, e
-                );
-                None
-            }
-        }
-        // original 离开作用域时不会被 drop（ManuallyDrop 保护），缓存中的 raw_fd 依然有效
-    } else {
-        eprintln!("[AndroidFD] FD 缓存未命中: msg_id={}", msg_id);
-        None
+    use std::os::unix::io::AsRawFd;
+    // Pin the descriptor while opening a new description through /proc. This
+    // preserves temporary-grant caching without reading from a shared dup cursor.
+    let (pinned, name, declared, uri) = {
+        let cache = fd_cache().lock().unwrap();
+        let (fd, name, size, uri) = cache.get(&msg_id)?;
+        let borrowed = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(*fd) });
+        let pinned = borrowed.try_clone().ok()?;
+        (pinned, name.clone(), *size, uri.clone())
+    };
+    let result = (|| {
+        let source = match std::fs::File::open(format!("/proc/self/fd/{}", pinned.as_raw_fd())) {
+            Ok(source) => source,
+            Err(_) => AndroidFile::from_content_uri(&uri)?.into_file(),
+        };
+        let metadata = source.metadata().map_err(|error| error.to_string())?;
+        let size = crate::file_source::size_from_metadata(&metadata, declared as usize)?;
+        Ok::<_, String>((tokio::fs::File::from_std(source), name, size as u64))
+    })();
+    match result {
+        Ok(source) => Some(source),
+        Err(error) => { eprintln!("[AndroidFD] 无法独立打开缓存文件: {error}"); None }
     }
 }
 
@@ -152,7 +142,7 @@ pub fn duplicate_cached_file(msg_id: i64) -> Option<(tokio::fs::File, String, u6
 #[cfg(target_os = "android")]
 pub fn remove_cached_fd(msg_id: i64) {
     let mut cache = fd_cache().lock().unwrap();
-    if let Some((fd, _, _)) = cache.remove(&msg_id) {
+    if let Some((fd, _, _, _)) = cache.remove(&msg_id) {
         // drop File → 自动 close(fd)
         unsafe { std::fs::File::from_raw_fd(fd) };
         println!("[AndroidFD] FD 已移除并关闭: msg_id={}, fd={}", msg_id, fd);
@@ -174,7 +164,7 @@ pub fn clone_fd_for_ipc(msg_id: i64) -> Option<RawFd> {
     use std::os::unix::io::{FromRawFd, IntoRawFd};
 
     let cache = fd_cache().lock().unwrap();
-    if let Some((raw_fd, _, _)) = cache.get(&msg_id) {
+    if let Some((raw_fd, _, _, _)) = cache.get(&msg_id) {
         let mut original = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(*raw_fd) });
         if let Err(e) = original.seek(std::io::SeekFrom::Start(0)) {
             eprintln!("[AndroidFD] 警告: seek(0) 失败: {}", e);
@@ -206,7 +196,7 @@ pub fn clone_fd_for_ipc(msg_id: i64) -> Option<RawFd> {
 #[cfg(target_os = "android")]
 pub fn get_cached_file_name(msg_id: i64) -> Option<String> {
     let cache = fd_cache().lock().unwrap();
-    cache.get(&msg_id).map(|(_, name, _)| name.clone())
+    cache.get(&msg_id).map(|(_, name, _, _)| name.clone())
 }
 
 /// JNI 导出：供 FdContentProvider 调用，获取克隆的 FD
@@ -235,7 +225,7 @@ pub extern "system" fn Java_com_lanchat_app_FdContentProvider_nativeGetFileSize(
     msg_id: jni::sys::jlong,
 ) -> jni::sys::jlong {
     let cache = fd_cache().lock().unwrap();
-    if let Some((_, _, size)) = cache.get(&(msg_id as i64)) {
+    if let Some((_, _, size, _)) = cache.get(&(msg_id as i64)) {
         *size as jni::sys::jlong
     } else {
         -1
@@ -244,7 +234,7 @@ pub extern "system" fn Java_com_lanchat_app_FdContentProvider_nativeGetFileSize(
 #[cfg(target_os = "android")]
 pub fn clear_all_cached_fds() {
     let mut cache = fd_cache().lock().unwrap();
-    for (_msg_id, (fd, _, _)) in cache.drain() {
+    for (_msg_id, (fd, _, _, _)) in cache.drain() {
         unsafe { std::fs::File::from_raw_fd(fd) };
     }
     println!("[AndroidFD] 全部 FD 缓存已清理");

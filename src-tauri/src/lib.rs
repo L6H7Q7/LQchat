@@ -100,6 +100,7 @@ pub mod core_events;
 pub mod core_runtime;
 pub mod db;
 pub mod models;
+pub mod file_source;
 pub mod network;
 #[cfg(target_os = "android")]
 pub mod notification_android;
