@@ -157,7 +157,7 @@ async function main() {
   await capture("android-settings");
 
   const appPicker = await evaluate(`(async () => {
-    document.querySelector('.ns-app-picker-row').click();
+    document.querySelector('.ns-app-picker-entry').click();
     await new Promise(resolve => setTimeout(resolve, 100));
     const panel = document.getElementById('android-push-apps-panel');
     const rows = [...panel.querySelectorAll('.android-push-app-row')];
@@ -205,13 +205,13 @@ async function main() {
     await new Promise(resolve => setTimeout(resolve, 180));
     return {
       closed: !panel.classList.contains('is-open'),
-      summary: document.querySelector('.ns-app-picker-summary')?.textContent || ''
+      summary: document.querySelector('.ns-app-picker-entry')?.textContent || ''
     };
   })()`);
   assert(appPickerSaved.closed, "Push-app picker did not close after saving");
-  assert.match(appPickerSaved.summary, /已选 2 个/, "Push-app selection summary was not updated");
+  assert.match(appPickerSaved.summary, /应用信息推送（2）/, "Push-app selection summary was not updated");
   const reopenedApps = await evaluate(`(async () => {
-    document.querySelector('.ns-app-picker-row').click();
+    document.querySelector('.ns-app-picker-entry').click();
     await new Promise(resolve => setTimeout(resolve, 150));
     const result = {
       selected: document.querySelectorAll('.android-push-app-row input:checked').length,
@@ -221,7 +221,7 @@ async function main() {
     document.getElementById('android-push-apps-select-all').click();
     document.getElementById('android-push-apps-back-btn').click();
     await new Promise(resolve => setTimeout(resolve, 100));
-    document.querySelector('.ns-app-picker-row').click();
+    document.querySelector('.ns-app-picker-entry').click();
     await new Promise(resolve => setTimeout(resolve, 150));
     result.cancelPreserved = document.querySelectorAll('.android-push-app-row input:checked').length === 2;
     document.getElementById('android-push-apps-back-btn').click();

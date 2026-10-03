@@ -1,0 +1,29 @@
+body.android-app .cr-card { display: block; margin-top: 16px; padding: 16px; border-radius: 18px; background: var(--android-card); }
+body.android-app .cr-header, body.android-app .cr-switch { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; }
+body.android-app .cr-link { border: 0; background: transparent; color: var(--android-purple); font: inherit; min-height: 44px; padding: 8px; }
+body.android-app .cr-danger, body.android-app .cr-error { color: #c03939; }
+body.android-app .cr-next { padding: 12px; margin: 8px 0 16px; border-radius: 12px; background: var(--android-bg); display: grid; gap: 5px; overflow-wrap: anywhere; }
+body.android-app .cr-hint { color: var(--android-muted); font-size: 12px; }
+body.android-app .cr-days { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 3px; margin: 12px 0; }
+body.android-app .cr-day { border: 0; border-radius: 10px; padding: 9px 0; background: transparent; color: var(--android-muted); font: inherit; font-size: 12px; min-width: 0; min-height: 48px; }
+body.android-app .cr-day[aria-pressed="true"], body.android-app .cr-chip[aria-pressed="true"] { color: var(--android-purple); background: var(--android-purple-soft); }
+body.android-app .cr-day span { display: block; margin-top: 4px; }
+body.android-app .cr-two { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+body.android-app .cr-fields { display: grid; gap: 14px; min-width: 0; }
+body.android-app .cr-fields label:not(.cr-switch) { display: grid; gap: 6px; min-width: 0; }
+body.android-app .cr-fields input:not([type="checkbox"]), body.android-app .cr-fields textarea, body.android-app .cr-fields select { width: 100%; min-width: 0; box-sizing: border-box; background: var(--android-bg); color: var(--android-ink); border: 1px solid var(--android-line); border-radius: 10px; padding: 10px; font: inherit; font-size: 16px; min-height: 44px; }
+body.android-app .cr-fields textarea { resize: vertical; }
+body.android-app .cr-fields input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--android-purple); }
+body.android-app .cr-fields fieldset { border: 0; padding: 0; margin: 0; }
+body.android-app .cr-global { padding-bottom: 16px; margin-bottom: 14px; border-bottom: 1px solid var(--android-line); }
+body.android-app .cr-row { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: 0; border-bottom: 1px solid var(--android-line); padding: 14px 0; text-align: left; color: var(--android-ink); font: inherit; }
+body.android-app .cr-row time { flex: none; color: var(--android-muted); font-size: 12px; }
+body.android-app .cr-row span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+body.android-app .cr-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+body.android-app .cr-chip { border: 1px solid var(--android-line); background: var(--android-bg); color: var(--android-ink); border-radius: 9px; font: inherit; padding: 8px; min-height: 44px; min-width: 40px; }
+body.android-app .cr-save { border: 0; border-radius: 12px; padding: 14px; width: 100%; font: inherit; background: var(--android-purple); color: #fff; margin-top: 14px; }
+body.android-app #android-custom-reminder-panel .android-settings-card { margin-bottom: 14px; padding: 16px; }
+body.android-app #android-custom-reminder-panel { z-index: 1030; }
+body.android-app .cr-card [hidden], body.android-app #android-custom-reminder-panel [hidden] { display: none !important; }
+body.android-app .cr-card :disabled, body.android-app #android-custom-reminder-panel button:disabled { opacity: .55; }
+@media(max-width:360px) { body.android-app .cr-card { padding: 12px; } body.android-app .cr-two { gap: 8px; } }

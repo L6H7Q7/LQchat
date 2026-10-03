@@ -96,7 +96,7 @@ async function main() {
       await open();
       await click('#android-permissions-btn'); await expectPage('#permissions');
       back(); await expectPage('#settings');
-      await click('.ns-app-picker-row'); await expectPage('#push-apps');
+      await click('.ns-app-picker-entry'); await expectPage('#push-apps');
       back(); await expectPage('#settings');
       back(); await expectPage('');
     }
@@ -110,7 +110,7 @@ async function main() {
     await click('#save-permissions-btn'); await expectPage('#settings');
     await wait('document.querySelector(".message-action-toast")?.textContent === "保存成功"');
     await sleep(220); capture('mumu-permissions-save-success');
-    await click('.ns-app-picker-row');
+    await click('.ns-app-picker-entry');
     await wait('!document.getElementById("android-push-apps-save-btn").disabled');
     await setValue('#android-push-apps-category', 'system');
     await wait('document.querySelectorAll(".android-push-app-row").length > 0');

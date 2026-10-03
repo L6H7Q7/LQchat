@@ -160,7 +160,7 @@ class MainActivity : TauriActivity() {
                 // Same-document history is owned by the frontend, not WebView.canGoBack().
                 view.evaluateJavascript("""
                     (() => {
-                        const pages = ['#settings', '#permissions', '#push-apps', '#push-sources',
+                        const pages = ['#settings', '#permissions', '#push-apps', '#push-sources', '#notification-options', '#custom-reminder',
                             '#notifications', '#chat', '#chat-select', '#chat-attachment'];
                         if (history.length > 1 && pages.includes(location.hash)) {
                             history.back();
@@ -204,10 +204,14 @@ class MainActivity : TauriActivity() {
     fun getBackgroundRuntimeSettings(): String = BackgroundRuntimeSettings.read(this).toString()
 
     @Keep
+    fun customReminderSettings(input: String): String = CustomReminderController.command(this, input)
+
+    @Keep
     fun setBackgroundRuntimeSettings(input: String): String {
         val saved = BackgroundRuntimeSettings.save(this, JSONObject(input))
         applyRecentsPolicy(saved.optBoolean("exclude_from_recents"))
         LanChatForegroundService.refreshBatteryAlerts()
+        CustomReminderController.refresh(this)
         return saved.toString()
     }
 
@@ -618,6 +622,7 @@ class MainActivity : TauriActivity() {
     
     override fun onResume() {
         super.onResume()
+        CustomReminderController.refresh(this)
         println("[MainActivity] onResume 被调用")
         notifyShareAvailable()
     }

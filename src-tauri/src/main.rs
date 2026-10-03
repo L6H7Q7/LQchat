@@ -170,6 +170,7 @@ fn main() {
             lanchat::commands::set_notification_sound_enabled,
             lanchat::commands::get_background_receive_state,
             lanchat::commands::get_background_runtime_settings,
+            lanchat::commands::custom_reminder_settings,
             lanchat::commands::set_background_runtime_settings,
             lanchat::commands::retry_background_service,
             lanchat::commands::stop_background_receive_and_exit,

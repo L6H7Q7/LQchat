@@ -5,6 +5,7 @@
   "platforms": ["android", "iOS"],
   "windows": ["main"],
   "permissions": [
+    "allow-custom-reminder-settings",
     "core:default",
     "core:event:default",
     "core:path:default",

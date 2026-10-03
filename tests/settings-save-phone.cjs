@@ -94,7 +94,7 @@ function main() {
   }
   // Reload without writing: verify readback and leave the phone on the permission page.
   runProbe('reload');
-  wait(`!!document.querySelector('.ns-app-picker-row')`);
+  wait(`!!document.querySelector('.ns-app-picker-entry')`);
   openPermissions();
   assert.deepEqual(config(),before);
 }

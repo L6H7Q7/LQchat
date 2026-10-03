@@ -22,6 +22,7 @@ object NotificationSyncSettings {
         return JSONObject().put("push_enabled", p.getBoolean("push_enabled", false))
             .put("receive_enabled", p.getBoolean("receive_enabled", false))
             .put("lq_battery_push_enabled", p.getBoolean("lq_battery_push_enabled", false))
+            .put("lq_reminder_push_enabled", p.getBoolean("lq_reminder_push_enabled", false))
             .put("allowed_packages", JSONArray(p.getStringSet("allowed_packages", emptySet())!!.sorted()))
             .put("target_device_ids", JSONArray(p.getStringSet("target_device_ids", emptySet())!!.sorted()))
     }
@@ -56,12 +57,14 @@ object NotificationSyncSettings {
                 val saved = store.edit().putBoolean("push_enabled", s.optBoolean("push_enabled"))
                     .putBoolean("receive_enabled", s.optBoolean("receive_enabled"))
                     .putBoolean("lq_battery_push_enabled", s.optBoolean("lq_battery_push_enabled"))
+                    .putBoolean("lq_reminder_push_enabled", s.optBoolean("lq_reminder_push_enabled"))
                     .putStringSet("allowed_packages", strings(s.optJSONArray("allowed_packages")) - context.packageName)
                     .putStringSet("target_device_ids", strings(s.optJSONArray("target_device_ids"))).commit()
                 if (!saved) {
                     store.edit().putBoolean("push_enabled", previous.optBoolean("push_enabled"))
                         .putBoolean("receive_enabled", previous.optBoolean("receive_enabled"))
                         .putBoolean("lq_battery_push_enabled", previous.optBoolean("lq_battery_push_enabled"))
+                        .putBoolean("lq_reminder_push_enabled", previous.optBoolean("lq_reminder_push_enabled"))
                         .putStringSet("allowed_packages", strings(previous.optJSONArray("allowed_packages")))
                         .putStringSet("target_device_ids", strings(previous.optJSONArray("target_device_ids"))).commit()
                     error("设置保存失败，已保留旧值")

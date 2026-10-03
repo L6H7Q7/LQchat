@@ -1791,3 +1791,44 @@ body.android-app .android-save-bar .success-msg:not(.show) {
     grid-template-columns: 82px minmax(0, 1fr);
   }
 }
+
+body.android-app .shared-reminder-settings {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--android-line);
+}
+body.android-app .shared-reminder-settings .battery-alert-timing {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+body.android-app .shared-reminder-settings .battery-alert-timing > label {
+  white-space: nowrap;
+}
+body.android-app .shared-reminder-settings .battery-alert-number input {
+  min-width: 0;
+  padding: 0 4px;
+}
+body.android-app .shared-reminder-settings .cr-error:empty {
+  display: none;
+}
+body.android-app .shared-reminder-settings .battery-alert-number [hidden] {
+  display: none;
+}
+body.android-app #android-push-details-panel .ns-app-picker-entry {
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border: 0;
+  padding: 8px 0;
+  text-align: left;
+  cursor: pointer;
+}
+body.android-app #android-push-details-panel .ns-app-picker-entry::after {
+  content: ' ›';
+  color: var(--android-muted);
+}

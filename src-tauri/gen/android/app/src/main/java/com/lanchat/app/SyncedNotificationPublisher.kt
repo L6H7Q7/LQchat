@@ -91,6 +91,11 @@ object SyncedNotificationPublisher {
             val title = titleWithSource(source, "电量")
             return Presentation(title, "", title)
         }
+        if (notification.optString("package") == "com.lanchat.app" &&
+            notification.optString("notification_key").startsWith("lq-reminder-")) {
+            val title = CustomReminderForwarding.remoteTitle(source, content.title)
+            return Presentation(title, "", title)
+        }
         val title = titleWithSource(source, titleWithApp(content.app, content.title))
         val sourceLabel = source.trim().takeIf { it.isNotEmpty() }?.let { "来自 $it" }.orEmpty()
         return Presentation(title, sourceLabel, title)

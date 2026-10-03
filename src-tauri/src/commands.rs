@@ -1894,7 +1894,10 @@ pub async fn set_notifications_enabled(
     state: tauri::State<'_, crate::db::DbState>,
     enabled: bool,
 ) -> Result<(), String> {
-    crate::db::set_notifications_enabled(&state.pool, enabled).await
+    crate::db::set_notifications_enabled(&state.pool, enabled).await?;
+    #[cfg(target_os = "android")]
+    sync_custom_reminder_options(&state).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1909,7 +1912,47 @@ pub async fn set_notification_sound_enabled(
     state: tauri::State<'_, crate::db::DbState>,
     enabled: bool,
 ) -> Result<(), String> {
-    crate::db::set_notification_sound_enabled(&state.pool, enabled).await
+    crate::db::set_notification_sound_enabled(&state.pool, enabled).await?;
+    #[cfg(target_os = "android")]
+    sync_custom_reminder_options(&state).await?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+async fn sync_custom_reminder_options(state: &tauri::State<'_, crate::db::DbState>) -> Result<(), String> {
+    let request = serde_json::json!({
+        "action": "options",
+        "enabled": crate::db::get_notifications_enabled(&state.pool).await,
+        "sound": crate::db::get_notification_sound_enabled(&state.pool).await,
+    });
+    let value = call_android_activity_string_arg("customReminderSettings", &request.to_string())?;
+    let result: serde_json::Value = serde_json::from_str(&value).map_err(|error| error.to_string())?;
+    if let Some(error) = result.get("error").and_then(|value| value.as_str()) {
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn custom_reminder_settings(
+    state: tauri::State<'_, crate::db::DbState>,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        sync_custom_reminder_options(&state).await?;
+        let value = call_android_activity_string_arg("customReminderSettings", &request.to_string())?;
+        let result: serde_json::Value = serde_json::from_str(&value).map_err(|error| error.to_string())?;
+        if let Some(error) = result.get("error").and_then(|value| value.as_str()) {
+            return Err(error.to_string());
+        }
+        Ok(result)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (state, request);
+        Err("仅 Android 支持自定义通知".to_string())
+    }
 }
 
 #[tauri::command]

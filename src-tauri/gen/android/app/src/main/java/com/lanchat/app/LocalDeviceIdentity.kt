@@ -27,5 +27,8 @@ internal object LocalDeviceIdentity {
 
     internal fun batteryNotificationTitle(name: String): String = "${normalize(name)} · 电量"
 
+    internal fun reminderNotificationTitle(name: String, title: String): String =
+        CustomReminderForwarding.title(normalize(name), title)
+
     private fun normalize(name: String): String = name.trim().ifBlank { FALLBACK_NAME }
 }

@@ -10,6 +10,7 @@ window.NotificationUI = (() => {
     push_enabled: false,
     receive_enabled: false,
     lq_battery_push_enabled: false,
+    lq_reminder_push_enabled: false,
     allowed_packages: [],
     target_device_ids: [],
   };
@@ -711,23 +712,23 @@ window.NotificationUI = (() => {
         choices.append(
           el("p", "ns-hint", "暂无已开启“允许接收其他设备推送”的在线设备。"),
         );
-      const appPickerRow = button("", chooseApps, "ns-app-picker-row");
-      appPickerRow.append(
-        el("strong", "", "选择推送应用"),
-        el(
-          "span",
-          "ns-app-picker-summary",
-          `已选 ${config.allowed_packages.length} 个`,
-        ),
-      );
-      content.append(
-        toggleRow("应用信息推送", config.push_enabled, async (input) => {
+      const appPushRow = toggleRow("应用信息推送", config.push_enabled, async (input) => {
           if (!(await save({ ...config, push_enabled: input.checked }, pushDetailsDialog)))
+            input.checked = !input.checked;
+        });
+      const appPickerEntry = button(`应用信息推送（${config.allowed_packages.length}）`, (event) => {
+        event.stopPropagation();
+        void chooseApps();
+      }, "ns-app-picker-entry");
+      appPushRow.firstElementChild.replaceWith(appPickerEntry);
+      content.append(
+        appPushRow,
+        toggleRow("自定义通知推送", config.lq_reminder_push_enabled, async (input) => {
+          if (!(await save({ ...config, lq_reminder_push_enabled: input.checked }, pushDetailsDialog)))
             input.checked = !input.checked;
         }),
         choices,
-        appPickerRow,
-        toggleRow("电量推送到其他设备", config.lq_battery_push_enabled, async (input) => {
+        toggleRow("电量推送", config.lq_battery_push_enabled, async (input) => {
           if (!(await save({ ...config, lq_battery_push_enabled: input.checked }, pushDetailsDialog)))
             input.checked = !input.checked;
         }),

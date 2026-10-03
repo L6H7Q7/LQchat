@@ -456,10 +456,10 @@ class LanChatServiceContractTest {
     fun batteryAlertSettingsRejectUnsafeRangesBeforePersisting() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         assertThrows(IllegalArgumentException::class.java) {
-            BackgroundRuntimeSettings.save(context, JSONObject().put("battery_alert_interval_seconds", 0))
+            BackgroundRuntimeSettings.save(context, JSONObject().put("battery_alert_repeat_count", 2).put("battery_alert_interval_seconds", 0))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            BackgroundRuntimeSettings.save(context, JSONObject().put("battery_alert_repeat_count", 11))
+            BackgroundRuntimeSettings.save(context, JSONObject().put("battery_alert_repeat_count", 21))
         }
         assertThrows(IllegalArgumentException::class.java) {
             BackgroundRuntimeSettings.save(

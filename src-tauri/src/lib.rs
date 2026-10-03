@@ -184,6 +184,7 @@ pub fn run() {
             commands::set_notification_sound_enabled,
             commands::get_background_receive_state,
             commands::get_background_runtime_settings,
+            commands::custom_reminder_settings,
             commands::set_background_runtime_settings,
             commands::retry_background_service,
             commands::stop_background_receive_and_exit,

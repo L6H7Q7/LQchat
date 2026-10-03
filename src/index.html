@@ -6,6 +6,7 @@
         <link rel="stylesheet" href="css/style.css">
         <link rel="stylesheet" href="css/notification-sync.css">
         <link rel="stylesheet" href="css/android-ui.css">
+        <link rel="stylesheet" href="css/custom-reminders.css">
         <link rel="stylesheet" href="css/desktop-ui.css" id="desktop-ui-stylesheet">
         <title>LQChat</title>
     </head>
@@ -62,9 +63,10 @@
                             <label class="toggle-switch"><input type="checkbox" id="android-system-notification-toggle" aria-label="系统通知权限" disabled><span class="toggle-slider"></span></label>
                         </div>
                         <div class="setting-item android-permission-row android-only">
-                            <button id="android-push-settings-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开通知访问权限的应用信息推送设置"><strong>通知访问权限</strong></button>
+                            <button id="android-push-settings-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开推送设置"><strong>通知访问权限</strong></button>
                             <label class="toggle-switch"><input type="checkbox" id="android-notification-access-toggle" aria-label="通知访问权限" disabled><span class="toggle-slider"></span></label>
                         </div>
+
                         <div class="setting-item android-permission-row" id="background-receive-setting" style="display: none;">
                             <button id="android-background-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开后台运行设置"><strong>后台运行</strong></button>
                             <label class="toggle-switch"><input type="checkbox" id="background-receive-toggle" aria-label="后台运行" disabled><span class="toggle-slider"></span></label>
@@ -77,6 +79,17 @@
                         <div class="setting-item android-permission-row android-only">
                             <button id="android-download-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开外部文件夹访问的下载设置"><strong>外部文件夹访问</strong></button>
                             <label class="toggle-switch"><input type="checkbox" id="android-permission-file-toggle" aria-label="外部文件夹访问"><span class="toggle-slider"></span></label>
+                        </div>
+                        <div class="setting-item android-only shared-reminder-settings">
+
+                            <div class="battery-alert-timing">
+                                <label for="battery-alert-repeat-input">通知次数</label>
+                                <span class="battery-alert-number"><input type="number" id="battery-alert-repeat-input" class="no-spinner" inputmode="numeric" min="1" max="20" value="1" aria-label="通知次数"><span>次</span></span>
+                                <label for="battery-alert-interval-input">通知间隔</label>
+                                <span class="battery-alert-number"><input type="number" id="battery-alert-interval-input" class="no-spinner" inputmode="numeric" min="1" max="3600" placeholder="无" aria-label="通知间隔，秒" disabled><span>秒</span></span>
+                            </div>
+
+                            <div id="shared-reminder-settings-status" class="cr-error" role="status"></div>
                         </div>
                     </section>
                 </section>
@@ -149,7 +162,7 @@
                 <button id="android-push-details-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
                 </button>
-                <h3>应用信息推送</h3>
+                <h3>推送设置</h3>
                 <span></span>
             </header>
             <div class="settings-content">
@@ -242,12 +255,6 @@
                         <span class="android-permission-copy"><strong>手机电量提醒</strong></span>
                         <label class="toggle-switch"><input type="checkbox" id="battery-alert-toggle"><span class="toggle-slider"></span></label>
                         <fieldset id="battery-alert-controls" class="battery-alert-controls">
-                            <div class="battery-alert-timing">
-                                <label for="battery-alert-interval-input">提醒间隔</label>
-                                <span class="battery-alert-number"><input type="number" id="battery-alert-interval-input" class="no-spinner" inputmode="numeric" min="1" max="60" value="5" aria-label="提醒间隔，秒"><span>秒</span></span>
-                                <label for="battery-alert-repeat-input">提醒次数</label>
-                                <span class="battery-alert-number"><input type="number" id="battery-alert-repeat-input" class="no-spinner" inputmode="numeric" min="1" max="10" value="3" aria-label="提醒次数"><span>次</span></span>
-                            </div>
                             <div class="battery-alert-level-row">
                                 <div id="battery-alert-level-list" class="battery-alert-level-list" aria-label="提醒电量">
                                     <button type="button" class="battery-alert-level-chip" data-level="50" aria-label="删除 50% 提醒">50% <span aria-hidden="true">×</span></button>
@@ -261,6 +268,37 @@
                     </div>
                 </section>
             </div>
+        </section>
+        <section id="android-custom-reminder-panel" class="android-overlay-panel android-only" aria-label="自定义通知编辑">
+            <header class="android-page-bar android-only">
+                <button id="cr-back" class="android-back-btn" type="button" aria-label="返回通知提醒设置">‹</button>
+                <h3 id="cr-heading">添加自定义通知</h3>
+                <button id="cr-delete" class="cr-link cr-danger" type="button" hidden>删除</button>
+            </header>
+            <form id="cr-form" class="settings-content">
+                <section class="android-settings-card cr-fields">
+                    <label>通知标题<input id="cr-title" maxlength="60" required placeholder="例如：收菜"></label>
+                    <label>通知内容<textarea id="cr-content" rows="3" maxlength="300" required placeholder="输入到点时的提醒内容"></textarea></label>
+                    <div class="cr-two"><label>日期模式<select id="cr-mode"><option value="daily">每日</option><option value="weekly">每周</option><option value="monthly">每月</option><option value="once">自定义某天</option><option value="weekdays">自定义一周中的某天</option><option value="monthdays">自定义某月中的某天</option></select></label><label>事件触发时间<input id="cr-time" type="time" required></label></div>
+                    <label id="cr-date-field" hidden>事件日期<input id="cr-date" type="date"></label>
+                    <label id="cr-week-field" hidden>每周提醒日<select id="cr-weekday"></select></label>
+                    <label id="cr-month-field" hidden>每月提醒日<input id="cr-monthday" type="number" min="1" max="31"></label>
+                    <div id="cr-weekdays-field" hidden><span>选择每周提醒日（可多选）</span><div id="cr-weekdays" class="cr-chips"></div></div>
+                    <div id="cr-monthdays-field" hidden><span>选择每月提醒日（可多选）</span><div id="cr-monthdays" class="cr-chips"></div></div>
+                    <div id="cr-month-note" class="cr-hint" hidden>当月没有所选日号时，跳过该日。</div>
+                </section>
+                <section class="android-settings-card cr-fields">
+                    <label class="cr-switch"><strong>倒计时提醒</strong><input id="cr-countdown" type="checkbox"></label>
+                    <fieldset id="cr-countdown-fields" class="cr-fields" hidden>
+                        <div class="cr-two"><label>每隔几天提醒一次<input id="cr-day-gap" type="number" min="1" max="365" required></label><label>倒计时发送时刻<input id="cr-day-time" type="time" required></label></div>
+                        <label class="cr-switch"><span>临近事件提醒</span><input id="cr-near" type="checkbox"></label>
+                        <fieldset id="cr-near-fields" class="cr-two" hidden><label>提前多久开始（分钟）<input id="cr-near-start" type="number" min="1" max="10080" required></label><label>每隔几分钟提醒<input id="cr-near-gap" type="number" min="1" max="1440" required></label></fieldset>
+                        <div class="cr-hint">按天提醒以事件日期向前计算；临近提醒期间暂停按天提醒。到点后发送正式通知。</div>
+                    </fieldset>
+                </section>
+                <div id="cr-error" class="cr-error" role="alert"></div>
+                <button id="cr-save" class="cr-save" type="submit">保存</button>
+            </form>
         </section>
         <section id="android-download-options-panel" class="android-overlay-panel android-only" aria-label="下载设置">
             <header class="android-page-bar android-only">
@@ -490,6 +528,7 @@
         <script src="js/api.js"></script>
         <script src="js/ui.js"></script>
         <script src="js/notification-sync.js"></script>
+        <script src="js/custom-reminders.js"></script>
         <script src="js/app.js"></script>
     </body>
 </html>

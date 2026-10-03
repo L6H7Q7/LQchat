@@ -46,7 +46,7 @@ async function main() {
     });
     const evaluate = async expression => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value;
     await send('Emulation.setDeviceMetricsOverride', { width: 450, height: 800, deviceScaleFactor: 2, mobile: true });
-    await poll(() => evaluate('!!document.querySelector(".ns-app-picker-row")'));
+    await poll(() => evaluate('!!document.querySelector(".ns-app-picker-entry")'));
     await evaluate(`(() => {
       const original = window.__TAURI__.core.invoke;
       window.qa = {writes: 0, fail: '', delay: 0, permission:'granted', permissionRequests:0, permissionMode:'deny', background: {keep_running:false,start_on_boot:false,exclude_from_recents:false,battery_alert_enabled:false,battery_alert_interval_seconds:5,battery_alert_repeat_count:3,battery_alert_levels:[50,100]}};
@@ -223,7 +223,7 @@ async function main() {
       await click('#android-permissions-btn');
       await expectPage('#permissions', true);
       await back(); await expectPage('#settings');
-      await click('.ns-app-picker-row');
+      await click('.ns-app-picker-entry');
       await expectPage('#push-apps', false, true);
       await back(); await expectPage('#settings');
       await click('#android-lq-push-settings-btn');
@@ -236,7 +236,7 @@ async function main() {
     await openSettings();
     await click('#android-permissions-btn');
     await click('#android-permissions-back-btn'); await expectPage('#settings');
-    await click('.ns-app-picker-row');
+    await click('.ns-app-picker-entry');
     await click('#android-push-apps-back-btn'); await expectPage('#settings');
     await click('#android-lq-push-settings-btn');
     await click('#android-lq-push-back-btn'); await expectPage('#settings');
@@ -267,7 +267,7 @@ async function main() {
     assert.deepEqual(await evaluate('qa.background.battery_alert_levels'), [25,100]);
     await screenshot('permissions-save-success');
     passed.push('Background and battery-alert changes save with visible success feedback');
-    await click('.ns-app-picker-row');
+    await click('.ns-app-picker-entry');
     await poll(() => evaluate('!document.getElementById("android-push-apps-save-btn").disabled'));
     await click('#android-push-apps-save-btn'); await expectPage('#settings');
     assert.equal((await state()).toast, '保存成功');
@@ -291,7 +291,7 @@ async function main() {
     await screenshot('permissions-save-failure');
     await evaluate('qa.fail = ""');
     await back(); await expectPage('#settings');
-    await click('.ns-app-picker-row');
+    await click('.ns-app-picker-entry');
     await poll(() => evaluate('!document.getElementById("android-push-apps-save-btn").disabled'));
     await evaluate('qa.fail = "QA app selection failure"');
     await click('#android-push-apps-save-btn');

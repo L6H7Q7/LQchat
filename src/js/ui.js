@@ -1067,7 +1067,7 @@ window.addEventListener("popstate", function (event) {
     return;
   }
   if (document.body.classList.contains("android-app") &&
-      ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#background-options", "#download-options"].includes(location.hash)) return;
+      ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash)) return;
   const chatContainer = document.getElementById("chat-container");
 
   const attachmentPanel = document.getElementById("android-attachment-panel");
@@ -2899,6 +2899,17 @@ function initSettings() {
   const setBatteryAlertControlsEnabled = () => {
     if (batteryAlertControls) batteryAlertControls.disabled = !batteryAlertToggle?.checked;
   };
+  const updateReminderInterval = () => {
+    const single = Number(batteryAlertRepeatInput.value) === 1;
+    batteryAlertIntervalInput.disabled = single;
+    batteryAlertIntervalInput.nextElementSibling.hidden = single;
+    if (single) batteryAlertIntervalInput.value = "";
+  };
+  batteryAlertRepeatInput?.addEventListener("change", () => {
+    updateReminderInterval();
+    scheduleAutoSave();
+  });
+  batteryAlertIntervalInput?.addEventListener("change", () => scheduleAutoSave());
   const showBatteryAlertValidation = (message = "") => {
     if (batteryAlertValidation) batteryAlertValidation.textContent = message;
   };
@@ -2986,7 +2997,7 @@ function initSettings() {
   };
   if (isAndroid) {
     window.addEventListener("popstate", () => {
-      const inSettings = ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#background-options", "#download-options"].includes(location.hash);
+      const inSettings = ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash);
       settingsPanel.style.display = inSettings ? "block" : "none";
       deviceSettingsPanel?.classList.toggle("is-open", location.hash === "#device-settings");
       notificationOptionsPanel?.classList.toggle("is-open", location.hash === "#notification-options");
@@ -3181,6 +3192,9 @@ function initSettings() {
       settingsSuccessMsg.textContent = "";
       settingsSuccessMsg.classList.remove("show");
 
+      const reminderStatus = document.getElementById("shared-reminder-settings-status");
+      if (reminderStatus) reminderStatus.textContent = "";
+
       try {
         if (settingsNameInput) {
           initialName = await apiGetMyName();
@@ -3219,8 +3233,9 @@ function initSettings() {
             backgroundExcludeRecentsToggle.checked = !!background.exclude_from_recents;
             batteryAlertToggle.checked = !!background.battery_alert_enabled;
             initialBatteryAlert = batteryAlertToggle.checked;
-            batteryAlertIntervalInput.value = String(background.battery_alert_interval_seconds ?? 5);
-            batteryAlertRepeatInput.value = String(background.battery_alert_repeat_count ?? 3);
+            batteryAlertIntervalInput.value = background.battery_alert_interval_seconds ? String(background.battery_alert_interval_seconds) : "";
+            batteryAlertRepeatInput.value = String(background.battery_alert_repeat_count ?? 1);
+            updateReminderInterval();
             batteryAlertLevels = Array.isArray(background.battery_alert_levels) && background.battery_alert_levels.length
               ? [...new Set(background.battery_alert_levels.map(Number))]
                   .filter((level) => Number.isInteger(level) && level >= 1 && level <= 100)
@@ -3377,11 +3392,13 @@ function initSettings() {
     const saveVersion = changeVersion;
     saving = true;
     let didSave = false;
+    let reminderValidationFailure = false;
     try {
       clearTimeout(successTimer);
       settingsErrorMsg.textContent = "";
       settingsSuccessMsg.textContent = "";
       settingsSuccessMsg.classList.remove("show");
+      document.getElementById("shared-reminder-settings-status").textContent = "";
 
       // 校验端口
       const portVal = document.activeElement === portInput ? initialPort : portInput.value.trim();
@@ -3417,18 +3434,18 @@ function initSettings() {
       const notificationsEnabled = notificationToggle.checked;
       const notificationSoundEnabled = notificationSoundToggle.checked;
       const batteryAlertEnabled = isAndroid && batteryAlertToggle.checked;
-      const previousBackground = initialBackgroundSettings ? JSON.parse(initialBackgroundSettings) : {};
-      const batteryAlertIntervalSeconds = isAndroid ? Number(document.activeElement === batteryAlertIntervalInput
-        ? previousBackground.battery_alert_interval_seconds : batteryAlertIntervalInput.value) : 5;
-      const batteryAlertRepeatCount = isAndroid ? Number(document.activeElement === batteryAlertRepeatInput
-        ? previousBackground.battery_alert_repeat_count : batteryAlertRepeatInput.value) : 3;
-      if (isAndroid && (!Number.isInteger(batteryAlertIntervalSeconds) || batteryAlertIntervalSeconds < 1 || batteryAlertIntervalSeconds > 60)) {
+      const batteryAlertIntervalSeconds = isAndroid ? Number(batteryAlertIntervalInput.value) : 0;
+      const batteryAlertRepeatCount = isAndroid ? Number(batteryAlertRepeatInput.value) : 1;
+      if (isAndroid && (!Number.isInteger(batteryAlertIntervalSeconds) ||
+          (batteryAlertRepeatCount !== 1 && (batteryAlertIntervalSeconds < 1 || batteryAlertIntervalSeconds > 3600)))) {
         batteryAlertIntervalInput.focus();
-        throw new Error("提醒间隔必须是 1～60 秒的整数");
+        reminderValidationFailure = true;
+        throw new Error("多次提醒时，请设置 1～3600 秒的间隔");
       }
-      if (isAndroid && (!Number.isInteger(batteryAlertRepeatCount) || batteryAlertRepeatCount < 1 || batteryAlertRepeatCount > 10)) {
+      if (isAndroid && (!Number.isInteger(batteryAlertRepeatCount) || batteryAlertRepeatCount < 1 || batteryAlertRepeatCount > 20)) {
         batteryAlertRepeatInput.focus();
-        throw new Error("提醒次数必须是 1～10 次的整数");
+        reminderValidationFailure = true;
+        throw new Error("提醒次数必须是 1～20 次的整数");
       }
       if (isAndroid && (!batteryAlertLevels.length || batteryAlertLevels.length > 10)) {
         throw new Error("请设置 1～10 个提醒电量");
@@ -3442,7 +3459,7 @@ function initSettings() {
         start_on_boot: backgroundStartOnBootToggle.checked,
         exclude_from_recents: backgroundExcludeRecentsToggle.checked,
         battery_alert_enabled: batteryAlertEnabled,
-        battery_alert_interval_seconds: batteryAlertIntervalSeconds,
+        battery_alert_interval_seconds: batteryAlertRepeatCount === 1 ? 0 : batteryAlertIntervalSeconds,
         battery_alert_repeat_count: batteryAlertRepeatCount,
         battery_alert_levels: batteryAlertLevels,
       } : null;
@@ -3503,6 +3520,7 @@ function initSettings() {
           didSave = true;
           initialBackgroundSettings = JSON.stringify(backgroundSettings);
           initialBatteryAlert = batteryAlertEnabled;
+          window.dispatchEvent(new Event("shared-reminder-settings-changed"));
         }
       }
 
@@ -3525,6 +3543,7 @@ function initSettings() {
     } catch (e) {
       const message = t("settings_save_fail") + ": " + getActionErrorMessage(e);
       settingsErrorMsg.textContent = isAndroid ? "" : message;
+      if (isAndroid) document.getElementById("shared-reminder-settings-status").textContent = message;
       if (isAndroid) {
         console.warn("[UI] 设置保存失败", message);
         showMessageActionToast("设置失败❌", 1000);
@@ -3545,6 +3564,11 @@ function initSettings() {
           backgroundStartOnBootToggle.checked = previous.start_on_boot;
           backgroundExcludeRecentsToggle.checked = previous.exclude_from_recents;
           batteryAlertToggle.checked = previous.battery_alert_enabled;
+          if (!reminderValidationFailure) {
+            batteryAlertRepeatInput.value = String(previous.battery_alert_repeat_count);
+            batteryAlertIntervalInput.value = previous.battery_alert_interval_seconds ? String(previous.battery_alert_interval_seconds) : "";
+            updateReminderInterval();
+          }
           setBatteryAlertControlsEnabled();
           showAndroidDownloadTarget(initialDlPath);
         }

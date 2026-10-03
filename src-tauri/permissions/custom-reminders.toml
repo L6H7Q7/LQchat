@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-custom-reminder-settings"
+description = "Allows the Android reminder editor to manage local schedules and open exact alarm settings"
+commands.allow = ["custom_reminder_settings"]

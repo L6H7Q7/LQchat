@@ -47,6 +47,7 @@ pub struct Settings {
     pub push_enabled: bool,
     pub receive_enabled: bool,
     pub lq_battery_push_enabled: bool,
+    pub lq_reminder_push_enabled: bool,
     pub allowed_packages: Vec<String>,
     pub target_device_ids: Vec<String>,
 }

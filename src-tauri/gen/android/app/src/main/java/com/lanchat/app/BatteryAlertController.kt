@@ -35,7 +35,7 @@ class BatteryAlertController(
         private const val STARTED_AT = "started_at"
         private const val NEXT_AT = "next_at"
         private const val NOTIFICATION_ID_BASE = 9_251
-        private const val MAX_REMINDER_COUNT = 10
+        private const val MAX_REMINDER_COUNT = 20
 
         /** Returns the crossed threshold nearest the current level. */
         internal fun thresholdFor(previousLevel: Int, currentLevel: Int, targetLevels: Set<Int>): Int? {

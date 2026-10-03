@@ -55,6 +55,10 @@ fn display_title(message: &Notification, source: &str) -> String {
         && message.title == "电量提醒";
     let title = if is_battery {
         "电量".to_string()
+    } else if message.package == "com.lanchat.app"
+        && message.notification_key.starts_with("lq-reminder-")
+    {
+        message.title.trim().to_string()
     } else {
         let app = message.app_name.trim();
         let title = message.title.trim();
@@ -275,5 +279,10 @@ mod tests {
         message.title = "电量提醒".into();
         message.notification_key = "lq-battery-50-123-0".into();
         assert_eq!(super::display_title(&message, "IQOO"), "IQOO · 电量");
+        message.app_name = "LQChat".into();
+        message.title = "收菜".into();
+        message.notification_key = "lq-reminder-example-123-1".into();
+        assert_eq!(super::display_title(&message, "IQOO"), "IQOO · 收菜");
+        assert_eq!(super::display_title(&message, "  "), "收菜");
     }
 }
