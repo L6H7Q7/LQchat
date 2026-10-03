@@ -1,4 +1,4 @@
-//! Windows-only publisher; chat/file Toast behavior remains unchanged.
+//! Windows publishers retain Toast objects and restore the UI on activation.
 use crate::notification_sync::{self, Notification};
 use std::collections::VecDeque;
 use std::path::Path;
@@ -48,6 +48,75 @@ fn xml_text(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+// WinRT invokes activation on its own thread. Restore and focus on Tauri's UI thread.
+fn activate_window(payload: Option<serde_json::Value>) {
+    use tauri::{Emitter, Manager};
+    let Some(handle) = crate::CURRENT_APP_HANDLE
+        .get()
+        .and_then(|slot| slot.read().ok())
+        .and_then(|slot| slot.clone())
+    else {
+        eprintln!("[Notification] 点击通知时窗口句柄不可用");
+        return;
+    };
+    let ui_handle = handle.clone();
+    if let Err(error) = handle.run_on_main_thread(move || {
+        if let Some(window) = ui_handle.get_webview_window("main") {
+            let result = window.show()
+                .and_then(|_| window.unminimize())
+                .and_then(|_| window.set_focus());
+            if let Err(error) = result {
+                eprintln!("[Notification] 唤起窗口失败: {error}");
+            }
+        }
+        if let Some(payload) = payload {
+            let _ = ui_handle.emit("synced-notification-tapped", payload);
+        } else {
+            let _ = ui_handle.emit("open-latest-unread", ());
+        }
+    }) {
+        eprintln!("[Notification] 调度通知点击失败: {error}");
+    }
+}
+
+fn message_toast_xml(title: &str, body: &str, use_system_sound: bool) -> String {
+    let audio = if use_system_sound {
+        "<audio src=\"ms-winsoundevent:Notification.Default\"/>"
+    } else {
+        "<audio silent=\"true\"/>"
+    };
+    format!(
+        "<toast duration=\"short\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual>{audio}</toast>",
+        xml_text(title), xml_text(body)
+    )
+}
+
+pub fn show_message(title: &str, body: &str, use_system_sound: bool) -> Result<(), String> {
+    // Dropping the COM object immediately after Show can lose its activation handler.
+    // Keep a bounded queue, including Toasts that moved into Notification Center.
+    static TOASTS: OnceLock<Mutex<VecDeque<ToastNotification>>> = OnceLock::new();
+    let result = (|| -> windows::core::Result<()> {
+        let doc = XmlDocument::new()?;
+        doc.LoadXml(&HSTRING::from(message_toast_xml(title, body, use_system_sound)))?;
+        let toast = ToastNotification::CreateToastNotification(&doc)?;
+        toast.Activated(&TypedEventHandler::new(|_, _| {
+            activate_window(None);
+            Ok(())
+        }))?;
+        let notifier = ToastNotificationManager::CreateToastNotifierWithId(
+            &HSTRING::from("com.lanchat.app"),
+        )?;
+        notifier.Show(&toast)?;
+        let mut toasts = TOASTS.get_or_init(|| Mutex::new(VecDeque::new())).lock().unwrap();
+        toasts.push_back(toast);
+        while toasts.len() > 512 {
+            toasts.pop_front();
+        }
+        Ok(())
+    })();
+    result.map_err(|error| format!("Windows 系统通知发送失败: {error}"))
 }
 fn display_title(message: &Notification, source: &str) -> String {
     let is_battery = message.package == "com.lanchat.app"
@@ -161,24 +230,9 @@ fn publish(
         let activation_record = record_id.to_string();
         let activation_source = message.source_device_id.clone();
         toast.Activated(&TypedEventHandler::new(move |_, _| {
-            use tauri::{Emitter, Manager};
-            if let Some(handle) = crate::CURRENT_APP_HANDLE
-                .get()
-                .and_then(|slot| slot.read().ok())
-                .and_then(|slot| slot.clone())
-            {
-                if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-                let _ = handle.emit(
-                    "synced-notification-tapped",
-                    serde_json::json!({
-                        "recordId":activation_record,"sourceDeviceId":activation_source
-                    }),
-                );
-            }
+            activate_window(Some(serde_json::json!({
+                "recordId":activation_record,"sourceDeviceId":activation_source
+            })));
             Ok(())
         }))?;
         toast.SetGroup(&HSTRING::from(&state.group))?;
@@ -238,6 +292,15 @@ pub async fn receive(payload: &serde_json::Value, pool: &sqlx::Pool<sqlx::Sqlite
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn message_toast_escapes_content_and_preserves_sound_setting() {
+        let xml = super::message_toast_xml("<标题>", "A&B\u{0}", false);
+        assert!(xml.contains("<text>&lt;标题&gt;</text><text>A&amp;B</text>"));
+        assert!(xml.contains("<audio silent=\"true\"/>"));
+        let audible = super::message_toast_xml("标题", "消息", true);
+        assert!(audible.contains("ms-winsoundevent:Notification.Default"));
+        assert!(!audible.contains("silent="));
+    }
     fn sample() -> crate::notification_sync::Notification {
         crate::notification_sync::Notification {
             msg_type: "notification".into(),

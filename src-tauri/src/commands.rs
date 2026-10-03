@@ -2341,19 +2341,7 @@ fn show_windows_system_notification_with_sound(
     use_system_sound: bool,
 ) -> Result<(), String> {
     ensure_windows_notification_identity()?;
-    use tauri_winrt_notification::{Duration, Sound, Toast};
-    let toast = Toast::new(WINDOWS_NOTIFICATION_APP_ID)
-        .title(title)
-        .text1(body)
-        .duration(Duration::Short);
-    let toast = if use_system_sound {
-        toast.sound(Some(Sound::Default))
-    } else {
-        toast.sound(None)
-    };
-    toast
-        .show()
-        .map_err(|error| format!("Windows 系统通知发送失败: {error}"))
+    crate::notification_windows::show_message(title, body, use_system_sound)
 }
 
 #[cfg(windows)]

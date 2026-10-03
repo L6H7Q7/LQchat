@@ -96,8 +96,8 @@ fn main() {
                 // 当尝试启动第二个实例时，显示已存在的窗口
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
-                    let _ = window.set_focus();
                     let _ = window.unminimize();
+                    let _ = window.set_focus();
                 }
             },
         ))
@@ -191,6 +191,11 @@ fn main() {
         .setup(move |app| {
             #[cfg(windows)]
             {
+                *lanchat::CURRENT_APP_HANDLE
+                    .get_or_init(|| std::sync::RwLock::new(None))
+                    .write()
+                    .map_err(|_| std::io::Error::other("无法设置 Windows 通知窗口句柄"))? =
+                    Some(app.handle().clone());
                 let window_config = app
                     .config()
                     .app
