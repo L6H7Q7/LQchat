@@ -25,6 +25,9 @@ async function renderPage() {
   // 初始化设置功能
   initSettings();
 
+  // 初始化设备列表上的断开判定时长设置入口
+  initRefreshCountdown();
+
   // 初始化手动添加设备功能
   initAddPeer();
 
@@ -207,6 +210,12 @@ async function refreshPeerListNow() {
   try {
     const peers = await apiGetPeers();
     if (!peers) return;
+    window.latestPeerPresence = new Map(peers.map((peer) => [peer.id, peer]));
+    if (peers.length) window.syncPresenceGraceSetting?.(peers[0].presence_grace_secs);
+    // 即使名称、地址等未变化也要更新计时，包括信息接收列表的同一设备。
+    document.querySelectorAll("[data-presence-peer-id]").forEach((indicator) => {
+      updatePeerPresenceIndicator(indicator, window.latestPeerPresence.get(indicator.dataset.presencePeerId));
+    });
     const peerSnapshot = JSON.stringify(peers.map((peer) => [
       peer.id,
       peer.name,

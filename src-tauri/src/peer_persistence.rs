@@ -12,7 +12,6 @@ use crate::peers::{Peer, PeerManager};
 
 const COALESCE: Duration = Duration::from_secs(1);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
-const PRESENCE_GRACE: Duration = Duration::from_secs(12);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Profile {
@@ -117,13 +116,15 @@ impl PeerPersistence {
         true
     }
 
+    /// 与在线探测共用同一个断开判定时长设置（界面可改，默认 20 秒）。
     pub fn is_stale(&self, id: &str) -> bool {
+        let grace = Duration::from_secs(crate::peers::presence_grace_secs());
         self.state
             .lock()
             .unwrap()
             .seen
             .get(id)
-            .is_none_or(|seen| seen.elapsed() >= PRESENCE_GRACE)
+            .is_none_or(|seen| seen.elapsed() >= grace)
     }
 
     pub fn status(&self) -> PersistenceStatus {
@@ -401,12 +402,13 @@ mod tests {
         assert_eq!(after, historical);
         // A short heartbeat gap is below the Windows grace period and reads do
         // not mutate presence; the shared monitor performs active confirmation.
+        let grace = crate::peers::presence_grace_secs();
         f.store
             .state
             .lock()
             .unwrap()
             .seen
-            .insert("peer".into(), Instant::now() - Duration::from_secs(6));
+            .insert("peer".into(), Instant::now() - Duration::from_secs(grace / 2));
         assert!(!f.store.is_stale("peer"));
         assert_eq!(f.manager.get_active_peers().len(), 1);
         f.store
@@ -414,7 +416,7 @@ mod tests {
             .lock()
             .unwrap()
             .seen
-            .insert("peer".into(), Instant::now() - Duration::from_secs(13));
+            .insert("peer".into(), Instant::now() - Duration::from_secs(grace + 1));
         assert!(f.store.is_stale("peer"));
     }
 

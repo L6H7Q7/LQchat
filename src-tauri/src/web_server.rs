@@ -227,6 +227,7 @@ async fn get_settings_http(State(state): State<Arc<AppState>>) -> impl IntoRespo
         .unwrap_or_else(crate::config_file::get_default_db_path);
 
     let auto_download = crate::db::get_auto_download(&state.pool).await;
+    let presence_grace_secs = crate::peers::presence_grace_secs();
 
     Json(serde_json::json!({
         "download_path": download_path,
@@ -235,6 +236,7 @@ async fn get_settings_http(State(state): State<Arc<AppState>>) -> impl IntoRespo
         "auto_download": auto_download,
         "close_to_tray": close_to_tray,
         "start_minimized": start_minimized,
+        "presence_grace_secs": presence_grace_secs,
     }))
     .into_response()
 }
@@ -247,6 +249,7 @@ struct UpdateSettingsRequest {
     auto_download: Option<bool>,
     close_to_tray: Option<bool>,
     start_minimized: Option<bool>,
+    presence_grace_secs: Option<u64>,
 }
 
 async fn update_settings_http(
@@ -305,6 +308,14 @@ async fn update_settings_http(
             if let Err(e) = crate::config_file::save_start_minimized_to_config(enabled) {
                 return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response();
             }
+        }
+    }
+    if let Some(secs) = payload.presence_grace_secs {
+        if let Err(e) = crate::peers::set_presence_grace_secs(secs) {
+            return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response();
+        }
+        if let Err(e) = crate::config_file::save_presence_grace_secs_to_config(secs) {
+            return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response();
         }
     }
 
@@ -736,7 +747,7 @@ async fn update_name_http(
 
 async fn get_peers_http(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // 不打印日志,避免刷屏
-    let peers = state.peer_manager.get_all_peers();
+    let peers = state.peer_manager.get_presence_peers();
     Json(peers).into_response()
 }
 

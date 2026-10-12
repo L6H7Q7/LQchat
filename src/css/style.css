@@ -1371,6 +1371,47 @@ body.android-app .android-attachment-panel.open {
 	font-size: 12px;
 }
 
+/* 局域网断开判定时长：工具条上的倒数入口，点击进入编辑态 */
+.peer-presence-time {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 3ch;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #827b94);
+}
+
+body.android-app .peer-presence-time {
+  color: var(--android-muted);
+  grid-column: 3;
+  align-self: start;
+  margin-top: 4px;
+}
+body.windows-app .peer-presence-time { color: var(--desktop-muted); align-self: start; margin-top: 7px; }
+body.windows-app .ns-device-copy { flex: 1; }
+
+.refresh-countdown {
+	display: inline-flex;
+	align-items: center;
+}
+
+.refresh-countdown-input {
+	display: none;
+	width: 62px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.refresh-countdown.is-editing .refresh-countdown-value {
+	display: none;
+}
+
+.refresh-countdown.is-editing .refresh-countdown-input {
+	display: inline-block;
+}
+
 /* 切换开关 (Toggle Switch) */
 .toggle-switch {
 	position: relative;

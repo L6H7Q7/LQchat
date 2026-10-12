@@ -73,6 +73,8 @@ pub struct Config {
     pub close_to_tray: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_minimized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_grace_secs: Option<u64>,
 }
 
 impl Default for Config {
@@ -83,6 +85,7 @@ impl Default for Config {
             lang: None,
             close_to_tray: None,
             start_minimized: None,
+            presence_grace_secs: None,
         }
     }
 }
@@ -242,4 +245,28 @@ pub fn save_start_minimized_to_config(enabled: bool) -> Result<(), String> {
     let mut cfg = read_config();
     cfg.start_minimized = Some(enabled);
     write_config(&cfg)
+}
+
+/// 局域网断开判定时长（秒）。未配置时返回出厂默认值，越界的配置收敛到合法区间。
+pub fn get_presence_grace_secs_from_config() -> u64 {
+    crate::peers::sanitize_presence_grace_secs(
+        read_config()
+            .presence_grace_secs
+            .unwrap_or(crate::peers::DEFAULT_PRESENCE_GRACE_SECS),
+    )
+}
+
+/// 保存局域网断开判定时长。
+pub fn save_presence_grace_secs_to_config(secs: u64) -> Result<(), String> {
+    let mut cfg = read_config();
+    cfg.presence_grace_secs = Some(crate::peers::sanitize_presence_grace_secs(secs));
+    write_config(&cfg)
+}
+
+/// 启动时把配置中的断开判定时长应用到运行期。
+pub fn apply_presence_grace_secs_from_config() {
+    let secs = get_presence_grace_secs_from_config();
+    if let Err(error) = crate::peers::set_presence_grace_secs(secs) {
+        eprintln!("[Config] 应用断开判定时长失败: {error}");
+    }
 }

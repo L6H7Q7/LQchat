@@ -55,6 +55,9 @@ async fn main() {
         .port
         .unwrap_or_else(|| lanchat::config_file::get_port_from_config().unwrap_or(8888));
 
+    // 局域网断开判定时长取自 config.json（未配置时为出厂默认值）
+    lanchat::config_file::apply_presence_grace_secs_from_config();
+
     // 创建全局用户管理器
     let peer_manager = Arc::new(PeerManager::new());
 

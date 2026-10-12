@@ -98,6 +98,21 @@ function initNameEditor() {
   });
 }
 
+// 只展示后台返回的真实计时，不用前端时钟制造倒计时。
+function updatePeerPresenceIndicator(indicator, peer) {
+  const remaining = peer?.presence_remaining_secs;
+  const text = peer?.is_offline ? "离线" : Number.isInteger(remaining) && remaining >= 0
+    ? remaining > 0 ? `${remaining}s` : "待确认"
+    : "—";
+  if (indicator.textContent !== text) indicator.textContent = text;
+  indicator.title = "距离触发断线探测的剩余时间；收到在线信息后重新计时";
+}
+
+function initPeerPresenceIndicator(indicator, id) {
+  indicator.dataset.presencePeerId = id;
+  updatePeerPresenceIndicator(indicator, window.latestPeerPresence?.get(id));
+}
+
 // 添加新用户到列表
 async function addUserToList(id, name, addr, isOffline = false, deferSort = false) {
   const list = document.getElementById("user-list");
@@ -136,8 +151,11 @@ async function addUserToList(id, name, addr, isOffline = false, deferSort = fals
           <span class="user-addr">${addr} · ${isOffline ? "离线" : "在线"}</span>
         </span>
         <span class="user-status">${isOffline ? "offline" : ""}</span>
+        <span class="peer-presence-time"></span>
         <span class="android-peer-chevron" aria-hidden="true">›</span>
     `;
+
+  initPeerPresenceIndicator(li.querySelector(".peer-presence-time"), id);
 
   if (isOffline) {
     li.classList.add("offline");
@@ -2809,6 +2827,108 @@ async function openFileLocation(filePath) {
     console.error("[UI] 打开文件位置失败:", e);
     showMessageActionToast("打开文件位置失败：" + getActionErrorMessage(e), 4000);
   }
+}
+
+// 局域网断开判定时长：刷新按钮左侧固定显示设定值，点击进入编辑态
+function initRefreshCountdown() {
+  const entries = ["desktop-refresh-countdown", "android-refresh-countdown"]
+    .map((id) => document.getElementById(id))
+    .filter((element) => !!element);
+  if (!entries.length) return;
+
+  const DEFAULT_SECONDS = 20;
+  const MIN_SECONDS = 3;
+  const MAX_SECONDS = 300;
+  let graceSeconds = DEFAULT_SECONDS;
+  let editing = false;
+
+  const render = () => {
+    for (const entry of entries) {
+      entry.querySelector(".refresh-countdown-value").textContent = `${graceSeconds}s`;
+    }
+  };
+  const restart = () => {
+    render();
+  };
+  const stopEditing = (entry) => {
+    editing = false;
+    entry.classList.remove("is-editing");
+    restart();
+  };
+  const beginEditing = (entry) => {
+    if (editing) return;
+    editing = true;
+    entry.classList.add("is-editing");
+    const input = entry.querySelector(".refresh-countdown-input");
+    input.value = String(graceSeconds);
+    input.focus();
+    input.select();
+  };
+  const commit = async (entry, cancel) => {
+    if (!entry.classList.contains("is-editing")) return;
+    const input = entry.querySelector(".refresh-countdown-input");
+    const raw = input.value.trim();
+    if (cancel || !raw) {
+      stopEditing(entry);
+      return;
+    }
+    const seconds = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) {
+      showMessageActionToast(`断开判定时长必须是 ${MIN_SECONDS}～${MAX_SECONDS} 的整数（秒）`, 4000);
+      window.setTimeout(() => { input.focus(); input.select(); }, 0);
+      return;
+    }
+    try {
+      await apiUpdatePresenceGraceSecs(seconds);
+      graceSeconds = seconds;
+      stopEditing(entry);
+    } catch (error) {
+      showMessageActionToast("保存断开判定时长失败：" + getActionErrorMessage(error), 4000);
+      stopEditing(entry);
+    }
+  };
+
+  for (const entry of entries) {
+    const value = entry.querySelector(".refresh-countdown-value");
+    const input = entry.querySelector(".refresh-countdown-input");
+    value.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      beginEditing(entry);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void commit(entry, false);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        void commit(entry, true);
+      }
+    });
+    input.addEventListener("blur", () => { void commit(entry, false); });
+  }
+
+  // 与设备快照同步当前生效阈值；入口始终显示设定值，不倒数。
+  window.syncPresenceGraceSetting = (seconds) => {
+    if (Number.isInteger(seconds) && seconds >= MIN_SECONDS && seconds <= MAX_SECONDS) {
+      graceSeconds = seconds;
+      render();
+    }
+  };
+
+  render();
+  void (async () => {
+    try {
+      const settings = await apiGetSettings();
+      const seconds = Number(settings?.presence_grace_secs);
+      if (Number.isInteger(seconds) && seconds >= MIN_SECONDS && seconds <= MAX_SECONDS) {
+        graceSeconds = seconds;
+      }
+    } catch (error) {
+      console.warn("[UI] 读取断开判定时长失败:", error);
+    }
+    restart();
+  })();
 }
 
 // 初始化设置功能

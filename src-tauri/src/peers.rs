@@ -1,12 +1,43 @@
 // 在线用户管理模块
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
-const PRESENCE_GRACE: Duration = Duration::from_secs(12);
+/// 局域网断开判定时长（秒）：设备超过该时长没有广播、且主动探测失败即判为离线。
+/// 未配置时的出厂默认值。
+pub const DEFAULT_PRESENCE_GRACE_SECS: u64 = 20;
+pub const MIN_PRESENCE_GRACE_SECS: u64 = 3;
+pub const MAX_PRESENCE_GRACE_SECS: u64 = 300;
+
+static PRESENCE_GRACE_SECS: AtomicU64 = AtomicU64::new(DEFAULT_PRESENCE_GRACE_SECS);
+
+/// 当前生效的断开判定时长（秒）。运行期修改立即生效，无需重启。
+pub fn presence_grace_secs() -> u64 {
+    PRESENCE_GRACE_SECS.load(Ordering::Relaxed)
+}
+
+/// 配置文件可能被手工改坏，读取时收敛到合法区间。
+pub fn sanitize_presence_grace_secs(secs: u64) -> u64 {
+    secs.clamp(MIN_PRESENCE_GRACE_SECS, MAX_PRESENCE_GRACE_SECS)
+}
+
+/// 校验并写入断开判定时长；越界时返回错误且不改变当前值。
+pub fn set_presence_grace_secs(secs: u64) -> Result<u64, String> {
+    if !(MIN_PRESENCE_GRACE_SECS..=MAX_PRESENCE_GRACE_SECS).contains(&secs) {
+        return Err(format!(
+            "断开判定时长必须在 {}～{} 秒之间",
+            MIN_PRESENCE_GRACE_SECS, MAX_PRESENCE_GRACE_SECS
+        ));
+    }
+    PRESENCE_GRACE_SECS.store(secs, Ordering::Relaxed);
+    println!("[PeerManager] 局域网断开判定时长已设为 {} 秒", secs);
+    Ok(secs)
+}
+
 pub(crate) const PRESENCE_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 pub(crate) async fn same_peer_reachable(client: &reqwest::Client, expected_id: &str, addr: &str) -> bool {
@@ -240,6 +271,7 @@ impl PeerManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let grace = presence_grace_secs();
         self.peers
             .read()
             .unwrap()
@@ -247,7 +279,7 @@ impl PeerManager {
             .filter(|peer| {
                 !peer.is_offline
                     && !peer.addr.is_empty()
-                    && now.saturating_sub(peer.last_seen) >= PRESENCE_GRACE.as_secs()
+                    && now.saturating_sub(peer.last_seen) >= grace
             })
             .map(|peer| StaleCandidate {
                 id: peer.id.clone(),
@@ -263,6 +295,7 @@ impl PeerManager {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let grace = presence_grace_secs();
         let mut peers = self.peers.write().unwrap();
         let Some(peer) = peers.get_mut(&candidate.id) else {
             return;
@@ -277,7 +310,7 @@ impl PeerManager {
             peer.last_seen = now;
             return;
         }
-        if now.saturating_sub(peer.last_seen) >= PRESENCE_GRACE.as_secs() {
+        if now.saturating_sub(peer.last_seen) >= grace {
             println!(
                 "[PeerManager] 用户离线: {} ({}) - {}秒未见且主动探测失败",
                 candidate.name,
@@ -286,6 +319,19 @@ impl PeerManager {
             );
             peer.is_offline = true;
         }
+    }
+
+    // 列表计时由服务端计算，使用与断线判断相同的时钟和阈值。
+    pub fn get_presence_peers(&self) -> Vec<PeerPresence> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let grace = presence_grace_secs();
+        self.get_all_peers()
+            .into_iter()
+            .map(|peer| PeerPresence::new(peer, now, grace))
+            .collect()
     }
 
     // 获取所有用户（包括离线的）
@@ -472,6 +518,29 @@ impl Default for PeerManager {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct PeerPresence {
+    #[serde(flatten)]
+    pub peer: Peer,
+    pub presence_remaining_secs: Option<u64>,
+    pub presence_grace_secs: u64,
+}
+
+impl PeerPresence {
+    fn new(peer: Peer, now: u64, grace: u64) -> Self {
+        let remaining = if peer.is_offline || peer.last_seen == 0 || peer.addr.is_empty() {
+            None
+        } else {
+            Some(grace.saturating_sub(now.saturating_sub(peer.last_seen)))
+        };
+        Self {
+            peer,
+            presence_remaining_secs: remaining,
+            presence_grace_secs: grace,
+        }
+    }
+}
+
 #[cfg(test)]
 mod presence_tests {
     use super::*;
@@ -489,8 +558,41 @@ mod presence_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
-            - 20;
+            - (DEFAULT_PRESENCE_GRACE_SECS + 8);
         manager
+    }
+
+    #[test]
+    fn presence_grace_defaults_to_twenty_seconds_and_rejects_out_of_range() {
+        assert_eq!(DEFAULT_PRESENCE_GRACE_SECS, 20);
+        assert_eq!(presence_grace_secs(), DEFAULT_PRESENCE_GRACE_SECS);
+        assert!(set_presence_grace_secs(MIN_PRESENCE_GRACE_SECS - 1).is_err());
+        assert!(set_presence_grace_secs(MAX_PRESENCE_GRACE_SECS + 1).is_err());
+        assert_eq!(sanitize_presence_grace_secs(0), MIN_PRESENCE_GRACE_SECS);
+        assert_eq!(sanitize_presence_grace_secs(10_000), MAX_PRESENCE_GRACE_SECS);
+        // 越界调用不得改变当前生效值。
+        assert_eq!(presence_grace_secs(), DEFAULT_PRESENCE_GRACE_SECS);
+    }
+
+    #[test]
+    fn presence_snapshot_tracks_each_peer_and_current_threshold() {
+        let manager = stale_manager();
+        let mut peer = manager.get_all_peers().pop().unwrap();
+        peer.last_seen = 100;
+        assert_eq!(PeerPresence::new(peer.clone(), 105, 20).presence_remaining_secs, Some(15));
+        assert_eq!(PeerPresence::new(peer.clone(), 105, 8).presence_remaining_secs, Some(3));
+        assert_eq!(PeerPresence::new(peer.clone(), 125, 20).presence_remaining_secs, Some(0));
+        peer.last_seen = 124;
+        let snapshot = PeerPresence::new(peer.clone(), 125, 20);
+        assert_eq!(snapshot.presence_remaining_secs, Some(19));
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(json["id"], "peer");
+        assert_eq!(json["presence_grace_secs"], 20);
+        peer.is_offline = true;
+        assert_eq!(PeerPresence::new(peer.clone(), 125, 20).presence_remaining_secs, None);
+        peer.is_offline = false;
+        peer.last_seen = 0;
+        assert_eq!(PeerPresence::new(peer, 125, 20).presence_remaining_secs, None);
     }
 
     #[test]
@@ -553,7 +655,7 @@ mod presence_tests {
         manager.observe_discovery("old".into(), "4060".into(), addr.clone(), 128);
         manager.observe_discovery("current".into(), "4060".into(), addr, 128);
         for peer in manager.peers.write().unwrap().values_mut() {
-            peer.last_seen -= 20;
+            peer.last_seen -= DEFAULT_PRESENCE_GRACE_SECS + 8;
         }
 
         let client = crate::network::lan_http_client(Some(PRESENCE_PROBE_TIMEOUT)).unwrap();

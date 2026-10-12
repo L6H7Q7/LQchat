@@ -418,7 +418,7 @@ body.android-app .ns-device {
   width: 100%;
   min-height: 72px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   margin: 0;
@@ -503,7 +503,7 @@ body.android-app #user-list .user-status {
 
 body.android-app .android-peer-chevron,
 body.android-app .ns-badge {
-  grid-column: 3;
+  grid-column: 4;
   color: var(--android-muted);
   background: transparent;
   font-size: 22px;
@@ -658,6 +658,35 @@ body.android-app #port-input:focus,
 body.android-app #download-path-input:focus {
   outline: 2px solid var(--android-purple);
   outline-offset: -2px;
+}
+
+body.android-app .refresh-countdown-value {
+  min-width: 46px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--android-line);
+  border-radius: 11px;
+  background: var(--android-card);
+  color: var(--android-muted);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+body.android-app .refresh-countdown-input {
+  width: 64px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--android-purple);
+  border-radius: 11px;
+  background: var(--android-card);
+  color: var(--android-ink);
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 body.android-app .desktop-download-setting {
@@ -1762,8 +1791,14 @@ body.android-app .android-save-bar .success-msg:not(.show) {
   }
 
   body.android-app .android-chat-card .android-list-toolbar {
-    grid-template-columns: minmax(0, 1fr) 42px auto;
+    grid-template-columns: minmax(0, 1fr) auto 42px auto;
     gap: 8px;
+  }
+
+  body.android-app .android-chat-card .refresh-countdown {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
 
   body.android-app .android-chat-card .android-count-label {
@@ -1774,13 +1809,15 @@ body.android-app .android-save-bar .success-msg:not(.show) {
   }
 
   body.android-app .android-chat-card .android-icon-btn {
+    grid-column: 3;
+    grid-row: 1;
     width: 42px;
     min-width: 42px;
     height: 42px;
   }
 
   body.android-app .android-chat-card .android-clear-offline-btn {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 1;
     min-height: 42px;
     padding: 0 10px;

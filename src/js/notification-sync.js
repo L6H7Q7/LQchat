@@ -145,7 +145,9 @@ window.NotificationUI = (() => {
           `${peer.addr || "当前地址未知"} · ${peer.is_offline ? "离线" : "在线"}`,
         ),
       );
-      row.append(copy, el("span", "ns-badge", "›"));
+      const timing = el("span", "peer-presence-time");
+      initPeerPresenceIndicator(timing, peer.id);
+      row.append(copy, timing, el("span", "ns-badge", "›"));
       row.classList.toggle("online", !peer.is_offline);
       list.append(row);
     }
@@ -201,7 +203,9 @@ window.NotificationUI = (() => {
           row.dataset.peer = id;
           const copy = el("span", "ns-device-copy");
           copy.append(el("strong", "ns-name"), el("small", "ns-address"));
-          row.append(copy, el("span", "ns-badge"));
+          const timing = el("span", "peer-presence-time");
+          initPeerPresenceIndicator(timing, id);
+          row.append(copy, timing, el("span", "ns-badge"));
           list.append(row);
         }
         const peer = peerFor(id),

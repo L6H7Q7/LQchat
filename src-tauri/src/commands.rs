@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use crate::db::DbState;
 
 #[cfg(feature = "desktop")]
-use crate::peers::{Peer, PeerManager};
+use crate::peers::PeerManager;
 
 #[cfg(feature = "desktop")]
 use std::sync::Arc;
@@ -356,6 +356,8 @@ pub async fn get_settings(state: State<'_, DbState>) -> Result<serde_json::Value
         .db_path
         .unwrap_or_else(crate::config_file::get_default_db_path);
     let auto_download = crate::db::get_auto_download(&state.pool).await;
+    // 返回当前生效值，界面显示的就是判定时实际使用的时长。
+    let presence_grace_secs = crate::peers::presence_grace_secs();
 
     Ok(serde_json::json!({
         "download_path": download_path,
@@ -364,6 +366,7 @@ pub async fn get_settings(state: State<'_, DbState>) -> Result<serde_json::Value
         "auto_download": auto_download,
         "close_to_tray": close_to_tray,
         "start_minimized": start_minimized,
+        "presence_grace_secs": presence_grace_secs,
     }))
 }
 
@@ -376,6 +379,7 @@ pub async fn update_settings(
     auto_download: Option<bool>,
     close_to_tray: Option<bool>,
     start_minimized: Option<bool>,
+    presence_grace_secs: Option<u64>,
 ) -> Result<(), String> {
     if let Some(path) = download_path {
         crate::db::update_download_path(&state.pool, path).await?;
@@ -412,6 +416,11 @@ pub async fn update_settings(
     if let Some(_enabled) = start_minimized {
         #[cfg(not(target_os = "android"))]
         crate::config_file::save_start_minimized_to_config(_enabled)?;
+    }
+    if let Some(secs) = presence_grace_secs {
+        // 先校验并热更新运行期，再落盘；两端都保存到 config.json。
+        crate::peers::set_presence_grace_secs(secs)?;
+        crate::config_file::save_presence_grace_secs_to_config(secs)?;
     }
 
     Ok(())
@@ -463,8 +472,8 @@ pub async fn update_my_name(state: State<'_, DbState>, new_name: String) -> Resu
 }
 
 #[tauri::command]
-pub async fn get_peers(state: State<'_, PeerState>) -> Result<Vec<Peer>, String> {
-    Ok(state.active_manager().get_all_peers())
+pub async fn get_peers(state: State<'_, PeerState>) -> Result<Vec<crate::peers::PeerPresence>, String> {
+    Ok(state.active_manager().get_presence_peers())
 }
 
 #[tauri::command]

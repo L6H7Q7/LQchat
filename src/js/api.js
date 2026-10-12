@@ -90,7 +90,7 @@ async function apiGetSettings() {
 }
 
 // 更新设置
-async function apiUpdateSettings(downloadPath, port, dbPath, autoDownload, closeToTray, startMinimized) {
+async function apiUpdateSettings(downloadPath, port, dbPath, autoDownload, closeToTray, startMinimized, presenceGraceSecs) {
   const tauri = getTauri();
 
   if (tauri) {
@@ -104,6 +104,7 @@ async function apiUpdateSettings(downloadPath, port, dbPath, autoDownload, close
         autoDownload,
         closeToTray,
         startMinimized,
+        presenceGraceSecs,
       });
     } catch (e) {
       console.error("[JS-API] Failed to update settings:", e);
@@ -123,6 +124,7 @@ async function apiUpdateSettings(downloadPath, port, dbPath, autoDownload, close
           auto_download: autoDownload,
           close_to_tray: closeToTray,
           start_minimized: startMinimized,
+          presence_grace_secs: presenceGraceSecs,
         }),
       });
       const data = await resp.json();
@@ -135,6 +137,11 @@ async function apiUpdateSettings(downloadPath, port, dbPath, autoDownload, close
       throw new Error("Failed to update settings: " + e);
     }
   }
+}
+
+// 单独更新局域网断开判定时长（其余设置保持不变）
+async function apiUpdatePresenceGraceSecs(seconds) {
+  return apiUpdateSettings(undefined, undefined, undefined, undefined, undefined, undefined, seconds);
 }
 
 // 获取默认下载路径

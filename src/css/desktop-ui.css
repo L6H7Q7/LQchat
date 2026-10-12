@@ -152,6 +152,10 @@ body.windows-app .setting-item > label { font-size: 12px; color: var(--desktop-m
 body.windows-app .path-input-group { margin: 0; gap: 8px; }
 body.windows-app :is(#port-input,#db-path-input,#download-path-input,#new-name-input,#custom-peer-input) { min-width: 0; padding: 11px 12px; height: 42px; margin: 0; border: 1px solid var(--desktop-line); background: var(--desktop-bg); color: var(--desktop-ink); border-radius: 11px; font-size: 13px; }
 body.windows-app :is(#port-input,#db-path-input,#download-path-input):focus { background: #fff; border-color: var(--desktop-accent); }
+body.windows-app .desktop-sidebar-actions { display: flex; align-items: center; gap: 8px; }
+body.windows-app .refresh-countdown-value { min-width: 48px; padding: 7px 10px; border: 1px solid var(--desktop-line); border-radius: 10px; background: #fff; color: var(--desktop-muted); font: 12px Consolas, monospace; cursor: pointer; }
+body.windows-app .refresh-countdown-value:hover { color: var(--desktop-accent); border-color: var(--desktop-accent); }
+body.windows-app .refresh-countdown-input { height: 34px; padding: 0 8px; border: 1px solid var(--desktop-accent); border-radius: 10px; background: #fff; color: var(--desktop-ink); font: 12px Consolas, monospace; }
 body.windows-app #settings-panel .android-permission-row:not(.android-only) { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 8px; }
 body.windows-app .android-permission-copy { display: grid; gap: 5px; }
 body.windows-app .android-permission-copy strong { font-size: 13px; font-weight: 500; }
