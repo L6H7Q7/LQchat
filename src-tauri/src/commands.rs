@@ -418,9 +418,7 @@ pub async fn update_settings(
         crate::config_file::save_start_minimized_to_config(_enabled)?;
     }
     if let Some(secs) = presence_grace_secs {
-        // 先校验并热更新运行期，再落盘；两端都保存到 config.json。
-        crate::peers::set_presence_grace_secs(secs)?;
-        crate::config_file::save_presence_grace_secs_to_config(secs)?;
+        crate::config_file::update_presence_grace_secs(&state.pool, secs).await?;
     }
 
     Ok(())

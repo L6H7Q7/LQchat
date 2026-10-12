@@ -229,6 +229,11 @@ pub fn run() {
                 };
                 #[cfg(not(target_os = "android"))]
                 let pool = db::init_db(&handle).await.expect("DB error");
+                // Activity 重建时不覆盖仍在运行的核心；冷启动先恢复持久化阈值。
+                #[cfg(target_os = "android")]
+                if existing_core_resources.is_none() {
+                    config_file::apply_presence_grace_secs_from_storage(&pool).await;
+                }
                 let my_name = db::get_username(&pool)
                     .await
                     .unwrap_or_else(|_| "Unknown".into());

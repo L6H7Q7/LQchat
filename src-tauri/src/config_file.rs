@@ -258,9 +258,40 @@ pub fn get_presence_grace_secs_from_config() -> u64 {
 
 /// 保存局域网断开判定时长。
 pub fn save_presence_grace_secs_to_config(secs: u64) -> Result<(), String> {
+    crate::peers::validate_presence_grace_secs(secs)?;
     let mut cfg = read_config();
-    cfg.presence_grace_secs = Some(crate::peers::sanitize_presence_grace_secs(secs));
+    cfg.presence_grace_secs = Some(secs);
     write_config(&cfg)
+}
+
+/// Android 与端口设置一样存入应用设置数据库；其他平台保留 config.json。
+pub async fn update_presence_grace_secs(
+    _pool: &sqlx::Pool<sqlx::Sqlite>,
+    secs: u64,
+) -> Result<(), String> {
+    crate::peers::persist_presence_grace_secs(secs, async {
+        #[cfg(target_os = "android")]
+        {
+            crate::db::set_presence_grace_secs(_pool, secs).await
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            save_presence_grace_secs_to_config(secs)
+        }
+    }).await
+}
+
+/// UI 冷启动和后台核心启动从相同存储读取；Android 不再访问通用配置目录。
+pub async fn apply_presence_grace_secs_from_storage(_pool: &sqlx::Pool<sqlx::Sqlite>) {
+    #[cfg(target_os = "android")]
+    {
+        let secs = crate::db::get_presence_grace_secs(_pool).await;
+        if let Err(error) = crate::peers::set_presence_grace_secs(secs) {
+            eprintln!("[Config] 应用断开判定时长失败: {error}");
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    apply_presence_grace_secs_from_config();
 }
 
 /// 启动时把配置中的断开判定时长应用到运行期。

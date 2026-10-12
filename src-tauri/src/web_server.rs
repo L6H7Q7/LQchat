@@ -311,10 +311,7 @@ async fn update_settings_http(
         }
     }
     if let Some(secs) = payload.presence_grace_secs {
-        if let Err(e) = crate::peers::set_presence_grace_secs(secs) {
-            return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response();
-        }
-        if let Err(e) = crate::config_file::save_presence_grace_secs_to_config(secs) {
+        if let Err(e) = crate::config_file::update_presence_grace_secs(&state.pool, secs).await {
             return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response();
         }
     }

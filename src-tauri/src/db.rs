@@ -1407,6 +1407,35 @@ pub async fn set_port(pool: &sqlx::Pool<sqlx::Sqlite>, port: u16) -> Result<(), 
     Ok(())
 }
 
+/// Android 的断线阈值保存在应用已有的 settings 表中。
+pub async fn get_presence_grace_secs(pool: &sqlx::Pool<sqlx::Sqlite>) -> u64 {
+    let stored = sqlx::query_as::<_, (String,)>(
+        "SELECT value FROM settings WHERE key = 'presence_grace_secs'",
+    ).fetch_optional(pool).await;
+    let secs = match stored {
+        Ok(Some((value,))) => value.parse::<u64>().ok(),
+        Ok(None) => None,
+        Err(error) => {
+            eprintln!("[DB] 读取断开判定时长失败: {error}");
+            None
+        }
+    }.unwrap_or(crate::peers::DEFAULT_PRESENCE_GRACE_SECS);
+    crate::peers::sanitize_presence_grace_secs(secs)
+}
+
+pub async fn set_presence_grace_secs(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    secs: u64,
+) -> Result<(), String> {
+    crate::peers::validate_presence_grace_secs(secs)?;
+    sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('presence_grace_secs', ?)")
+        .bind(secs.to_string())
+        .execute(pool)
+        .await
+        .map_err(|error| format!("保存断开判定时长失败: {error}"))?;
+    Ok(())
+}
+
 // ── 手动下载（file_offer / file_request） ───────────────────────
 
 /// 当收到 file_offer 且 auto_download=OFF 时，创建 "offered" 状态的记录
@@ -1668,6 +1697,74 @@ pub async fn update_sent_file_size(pool: &sqlx::Pool<sqlx::Sqlite>, msg_id: i64,
         .bind(msg_id).execute(pool).await
         .map_err(|error| format!("更新文件大小失败: {error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod presence_settings_tests {
+    use super::*;
+
+    async fn settings_pool() -> sqlx::Pool<sqlx::Sqlite> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn presence_setting_survives_database_reopen() {
+        let directory = std::env::temp_dir().join(format!("lqchat-presence-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(directory.join("settings.db")).create_if_missing(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect_with(options.clone()).await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool).await.unwrap();
+        assert_eq!(get_presence_grace_secs(&pool).await, 20);
+        set_presence_grace_secs(&pool, 30).await.unwrap();
+        assert!(set_presence_grace_secs(&pool, 2).await.is_err());
+        pool.close().await;
+        let reopened = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1)
+            .connect_with(options).await.unwrap();
+        assert_eq!(get_presence_grace_secs(&reopened).await, 30);
+        reopened.close().await;
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_read_only_save_preserves_storage_and_runtime() {
+        let pool = settings_pool().await;
+        set_presence_grace_secs(&pool, 20).await.unwrap();
+        sqlx::query("PRAGMA query_only = ON").execute(&pool).await.unwrap();
+        let before = crate::peers::presence_grace_secs();
+        let result = crate::peers::persist_presence_grace_secs(
+            30, set_presence_grace_secs(&pool, 30),
+        ).await;
+        assert!(result.is_err());
+        assert_eq!(get_presence_grace_secs(&pool).await, 20);
+        assert_eq!(crate::peers::presence_grace_secs(), before);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_threshold_does_not_attempt_persistence_and_corrupt_values_are_safe() {
+        let attempted = std::cell::Cell::new(false);
+        let before = crate::peers::presence_grace_secs();
+        assert!(crate::peers::persist_presence_grace_secs(301, async {
+            attempted.set(true);
+            Ok(())
+        }).await.is_err());
+        assert!(!attempted.get());
+        assert_eq!(crate::peers::presence_grace_secs(), before);
+        let pool = settings_pool().await;
+        for (value, expected) in [("broken", 20), ("0", 3), ("1000", 300)] {
+            sqlx::query("INSERT OR REPLACE INTO settings VALUES ('presence_grace_secs', ?)")
+                .bind(value).execute(&pool).await.unwrap();
+            assert_eq!(get_presence_grace_secs(&pool).await, expected);
+        }
+        pool.close().await;
+    }
 }
 
 #[cfg(test)]

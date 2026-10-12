@@ -20,7 +20,7 @@ let peers = [
   { id: 'a', name: 'A', addr: 'a:8888', is_offline: false, presence_remaining_secs: 18, presence_grace_secs: 20 },
   { id: 'b', name: 'B', addr: 'b:8888', is_offline: false, presence_remaining_secs: 9, presence_grace_secs: 20 },
 ];
-let renders = 0, saves = [];
+let renders = 0, saves = [], saveError = '', toast = '';
 const context = vm.createContext({
   console, Map, Set,
   window: { NotificationUI: { onPeers() { renders++; } }, setTimeout, setInterval() { throw Error('Setting must not start a countdown'); } },
@@ -30,8 +30,8 @@ const context = vm.createContext({
   },
   apiGetPeers: async () => peers,
   apiGetSettings: async () => ({ presence_grace_secs: 20 }),
-  apiUpdatePresenceGraceSecs: async seconds => { saves.push(seconds); },
-  showMessageActionToast() {}, getActionErrorMessage: String,
+  apiUpdatePresenceGraceSecs: async seconds => { if (saveError) throw Error(saveError); saves.push(seconds); },
+  showMessageActionToast(message) { toast = message; }, getActionErrorMessage: String,
   addUserToList() {}, sortUserList() {},
 });
 vm.runInContext(helper + setting + app.slice(app.indexOf('let peerRefreshInFlight'), app.indexOf('async function startPeerPolling')), context);
@@ -65,6 +65,15 @@ async function main() {
   assert.deepEqual(saves, [30]);
   assert.equal(entries[0].value.textContent, '30s');
   assert.equal(entries[1].value.textContent, '30s');
+  saveError = 'readonly database';
+  entries[0].value.handlers.click({ preventDefault() {}, stopPropagation() {} });
+  entries[0].input.value = '40';
+  entries[0].input.handlers.keydown({ key: 'Enter', preventDefault() {} });
+  await flush();
+  assert.match(toast, /保存断开判定时长失败/);
+  assert.equal(entries[0].value.textContent, '30s', 'A failed save keeps the previous setting');
+  assert.equal(entries[1].value.textContent, '30s');
+  assert.deepEqual(saves, [30]);
   const unknown = indicator('missing');
   context.unknownIndicator = unknown;
   vm.runInContext('initPeerPresenceIndicator(unknownIndicator, "missing")', context);

@@ -327,7 +327,7 @@ impl CoreRuntime {
         let supervisor_cancellation = cancellation.clone();
         let pool = prepared.pool;
         let peer_manager = prepared.peer_manager;
-        crate::config_file::apply_presence_grace_secs_from_config();
+        crate::config_file::apply_presence_grace_secs_from_storage(&pool).await;
         peer_manager.begin_presence_session();
         let pool_ownership = prepared.pool_ownership;
         let supervisor_pool = pool.clone();

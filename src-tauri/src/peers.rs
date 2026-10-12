@@ -25,17 +25,34 @@ pub fn sanitize_presence_grace_secs(secs: u64) -> u64 {
     secs.clamp(MIN_PRESENCE_GRACE_SECS, MAX_PRESENCE_GRACE_SECS)
 }
 
-/// 校验并写入断开判定时长；越界时返回错误且不改变当前值。
-pub fn set_presence_grace_secs(secs: u64) -> Result<u64, String> {
+/// 只校验，不改变运行值或持久化数据。
+pub fn validate_presence_grace_secs(secs: u64) -> Result<(), String> {
     if !(MIN_PRESENCE_GRACE_SECS..=MAX_PRESENCE_GRACE_SECS).contains(&secs) {
         return Err(format!(
             "断开判定时长必须在 {}～{} 秒之间",
             MIN_PRESENCE_GRACE_SECS, MAX_PRESENCE_GRACE_SECS
         ));
     }
+    Ok(())
+}
+
+/// 校验并写入运行期断开判定时长。
+pub fn set_presence_grace_secs(secs: u64) -> Result<u64, String> {
+    validate_presence_grace_secs(secs)?;
     PRESENCE_GRACE_SECS.store(secs, Ordering::Relaxed);
     println!("[PeerManager] 局域网断开判定时长已设为 {} 秒", secs);
     Ok(secs)
+}
+
+/// 两端共用的保存顺序：校验 -> 持久化 -> 热更新。保存失败时保持原运行值。
+pub async fn persist_presence_grace_secs(
+    secs: u64,
+    persist: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    validate_presence_grace_secs(secs)?;
+    persist.await?;
+    set_presence_grace_secs(secs)?;
+    Ok(())
 }
 
 pub(crate) const PRESENCE_PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
