@@ -12,6 +12,7 @@ window.NotificationUI = (() => {
   let detailPage = 1, detailHasMore = false, detailLoading = false,
     detailError = false, detailRequest = 0;
   let detailDates = { start: "", end: "", manual: false }, detailRetryAppend = false;
+  let dateWheel, dateWheelTrigger;
   let config = {
     push_enabled: false,
     receive_enabled: false,
@@ -279,6 +280,7 @@ window.NotificationUI = (() => {
   }
   function leave() {
     if (!enabled) return;
+    closeDateWheel();
     current = null;
     ++detailRequest;
     panel.hidden = true;
@@ -287,6 +289,7 @@ window.NotificationUI = (() => {
   }
   function open(id) {
     if (!enabled) return;
+    closeDateWheel();
     if (window.currentChatPeer) performCloseChatUI();
     current = { id, kind: id === localId ? "notification_local" : "notification_device" };
     detailRecords = [];
@@ -320,12 +323,64 @@ window.NotificationUI = (() => {
     const [year, month, day] = value.split("-").map(Number);
     return new Date(year, month - 1, day + (nextDay ? 1 : 0)).getTime();
   }
+  function closeDateWheel() {
+    if (dateWheel?.open) dateWheel.close();
+  }
+  function openDateWheel(kind, trigger) {
+    if (!current) return;
+    dateWheelTrigger = trigger;
+    const title = kind === "start" ? "选择开始日期" : "选择结束日期";
+    dateWheel.querySelector("h3").textContent = title;
+    const wheel = dateWheel.querySelector(".ns-wheel");
+    wheel.replaceChildren();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selected = panel.querySelector(`.ns-date-${kind} input`).value;
+    const choose = value => {
+      panel.querySelector(`.ns-date-${kind} input`).value = value;
+      // An empty history can still be filtered to the chosen day.
+      const other = kind === "start" ? "end" : "start";
+      const otherInput = panel.querySelector(`.ns-date-${other} input`);
+      if (!otherInput.value) otherInput.value = value;
+      closeDateWheel();
+      changeDateRange();
+    };
+    for (let i = 0; i < 6; i++) {
+      const day = new Date(today);
+      day.setDate(day.getDate() - 6 + i);
+      const value = dateValue(day.getTime()), angle = i * Math.PI / 3;
+      const item = button("", () => choose(value), "ns-wheel-day");
+      item.dataset.date = value;
+      item.style.setProperty("--wheel-x", `${50 + 37 * Math.sin(angle)}%`);
+      item.style.setProperty("--wheel-y", `${50 - 37 * Math.cos(angle)}%`);
+      item.style.setProperty("--wheel-angle", `${i * 60}deg`);
+      item.setAttribute("aria-label", `${value}，${title}`);
+      item.setAttribute("aria-pressed", String(selected === value));
+      const tick = el("span", "ns-wheel-tick");
+      tick.setAttribute("aria-hidden", "true");
+      item.append(tick, el("span", "ns-wheel-date", `${day.getMonth() + 1}/${day.getDate()}`),
+        el("span", "ns-wheel-week", ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][day.getDay()]));
+      wheel.append(item);
+    }
+    const value = dateValue(today.getTime());
+    const center = button("", () => choose(value), "ns-wheel-today");
+    center.dataset.date = value;
+    center.setAttribute("aria-label", `今日 ${value}，${title}`);
+    center.setAttribute("aria-current", "date");
+    center.setAttribute("aria-pressed", String(selected === value));
+    center.append(el("strong", "", "今日"), el("span", "", `${today.getMonth() + 1}/${today.getDate()}`));
+    wheel.append(center);
+    if (!dateWheel.open) dateWheel.showModal();
+    (wheel.querySelector('[aria-pressed="true"]') || center).focus();
+  }
   function renderDateControls() {
     for (const kind of ["start", "end"]) {
       const control = panel.querySelector(`.ns-date-${kind}`), value = detailDates[kind];
       control.querySelector("input").value = value;
       control.querySelector(".ns-date-value").textContent = value
         ? `${value.slice(5, 7)}月${value.slice(8, 10)}日` : "选择日期";
+      control.querySelector(".ns-date-trigger")?.setAttribute("aria-label",
+        `${kind === "start" ? "开始日期" : "结束日期"}，${value || "选择日期"}`);
     }
   }
   function changeDateRange() {
@@ -1073,12 +1128,16 @@ window.NotificationUI = (() => {
     );
     const footer = el("footer", "ns-footer ns-date-range");
     for (const [kind, label] of [["start", "开始日期"], ["end", "结束日期"]]) {
-      const control = el("label", `ns-date-control ns-date-${kind}`), input = el("input");
+      const control = el("div", `ns-date-control ns-date-${kind}`), input = el("input");
       input.type = "date";
       input.setAttribute("aria-label", label);
       input.addEventListener("change", changeDateRange);
-      input.addEventListener("click", () => { try { input.showPicker?.(); } catch (_) {} });
       control.append(el("span", "ns-date-label", label), el("span", "ns-date-value", "选择日期"), el("span", "ns-date-chevron", "⌄"), input);
+      input.hidden = true;
+      const trigger = button("", () => openDateWheel(kind, trigger), "ns-date-trigger");
+      trigger.setAttribute("aria-label", label);
+      trigger.setAttribute("aria-haspopup", "dialog");
+      control.append(trigger);
       footer.append(control);
     }
     const rangeError = el("p", "ns-range-error");
@@ -1086,6 +1145,31 @@ window.NotificationUI = (() => {
     rangeError.setAttribute("role", "alert");
     footer.append(rangeError);
     panel.append(footer);
+    {
+      dateWheel = el("dialog", "ns-date-wheel-dialog");
+      dateWheel.setAttribute("aria-labelledby", "ns-wheel-title");
+      const wheelHeader = el("header", "ns-wheel-header"), title = el("h3");
+      title.id = "ns-wheel-title";
+      const dismiss = button("×", closeDateWheel, "ns-wheel-close");
+      dismiss.setAttribute("aria-label", "关闭日期选择");
+      wheelHeader.append(title, dismiss);
+      dateWheel.append(wheelHeader, el("div", "ns-wheel"), el("p", "ns-wheel-hint", "点击日期直接选择 · 中心返回今日"));
+      dateWheel.addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeDateWheel();
+        }
+      });
+      dateWheel.addEventListener("click", event => {
+        const bounds = dateWheel.getBoundingClientRect();
+        if (event.target === dateWheel && (event.clientX < bounds.left || event.clientX > bounds.right ||
+            event.clientY < bounds.top || event.clientY > bounds.bottom)) closeDateWheel();
+      });
+      dateWheel.addEventListener("close", () => {
+        if (!panel.hidden) dateWheelTrigger?.focus();
+      });
+      panel.append(dateWheel);
+    }
     const cards = panel.querySelector(".ns-cards");
     cards.addEventListener("scroll", loadMoreOnScroll, { passive: true });
     cards.addEventListener("wheel", (event) => { if (event.deltaY > 0) requestAnimationFrame(loadMoreOnScroll); }, { passive: true });

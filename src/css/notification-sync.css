@@ -282,6 +282,42 @@ body.notification-enabled #user-list {
 .ns-date-control input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .ns-date-control:focus-within { outline: 2px solid var(--ns-accent); outline-offset: 2px; }
 .ns-range-error { grid-column: 1 / -1; margin: 0; color: #b3261e; text-align: left; font-size: 12px; }
+body:is(.android-app, .windows-app) .ns-date-trigger { position: absolute; inset: 0; width: 100%; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+body:is(.android-app, .windows-app) .ns-date-control input[hidden] { display: none; }
+body:is(.android-app, .windows-app) .ns-date-trigger:focus-visible { outline: 2px solid var(--android-purple); outline-offset: 2px; }
+body:is(.android-app, .windows-app) .ns-date-wheel-dialog {
+  width: min(380px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  box-sizing: border-box; overflow: auto; padding: 18px; margin: auto;
+  color: var(--android-ink); background: var(--android-card);
+  border: 1px solid var(--android-line); border-radius: 24px;
+  box-shadow: 0 12px 36px rgba(38, 31, 61, .14);
+}
+body:is(.android-app, .windows-app) .ns-date-wheel-dialog::backdrop { background: rgba(23, 28, 42, .28); }
+body:is(.android-app, .windows-app) .ns-wheel-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body:is(.android-app, .windows-app) .ns-wheel-header h3 { margin: 0; font-size: 18px; font-weight: 600; }
+body:is(.android-app, .windows-app) .ns-wheel-close { width: 44px; height: 44px; border: 0; border-radius: 12px; background: var(--android-bg); color: var(--android-muted); font: inherit; font-size: 24px; }
+body:is(.android-app, .windows-app) .ns-wheel { position: relative; width: 100%; aspect-ratio: 1; margin: 8px 0; border-radius: 50%; background: var(--android-bg); }
+body:is(.android-app, .windows-app) .ns-wheel::before { content: ""; position: absolute; inset: 24%; border: 1px solid var(--android-line); border-radius: 50%; pointer-events: none; }
+body:is(.android-app, .windows-app) .ns-wheel-day, body:is(.android-app, .windows-app) .ns-wheel-today {
+  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; padding: 4px; border: 0; color: var(--android-ink); background: transparent;
+  font: inherit; cursor: pointer; touch-action: manipulation; transform: translate(-50%, -50%);
+}
+body:is(.android-app, .windows-app) .ns-wheel-day { left: var(--wheel-x); top: var(--wheel-y); width: 64px; height: 56px; border-radius: 14px; }
+body:is(.android-app, .windows-app) .ns-wheel-date { font-size: 16px; font-weight: 600; }
+body:is(.android-app, .windows-app) .ns-wheel-week { font-size: 11px; color: var(--android-muted); }
+body:is(.android-app, .windows-app) .ns-wheel-tick { position: absolute; top: 50%; left: 50%; width: 2px; height: 12px; border-radius: 2px; background: var(--android-muted); transform: translate(-50%, -50%) rotate(var(--wheel-angle)) translateY(34px); pointer-events: none; }
+body:is(.android-app, .windows-app) .ns-wheel-today { left: 50%; top: 50%; width: 76px; height: 76px; border: 1px solid var(--android-line); border-radius: 50%; background: var(--android-card); color: var(--android-purple); box-shadow: 0 4px 12px rgba(38, 31, 61, .06); }
+body:is(.android-app, .windows-app) .ns-wheel-today strong { font-size: 18px; }
+body:is(.android-app, .windows-app) .ns-wheel-today span { font-size: 12px; }
+body:is(.android-app, .windows-app) .ns-wheel :is(button[aria-pressed="true"], button:active, button:focus-visible) { color: var(--android-purple); background: var(--android-purple-soft); }
+body:is(.android-app, .windows-app) .ns-wheel button:focus-visible { outline: 2px solid var(--android-purple); outline-offset: 2px; }
+body:is(.android-app, .windows-app) .ns-wheel-day:is([aria-pressed="true"], :active, :focus-visible) .ns-wheel-tick { background: var(--android-purple); }
+@media (hover: hover) {
+  body:is(.android-app, .windows-app) .ns-wheel button:hover { color: var(--android-purple); background: var(--android-purple-soft); }
+  body:is(.android-app, .windows-app) .ns-wheel-day:hover .ns-wheel-tick { background: var(--android-purple); }
+}
+body:is(.android-app, .windows-app) .ns-wheel-hint { margin: 8px 0 0; text-align: center; color: var(--android-muted); font-size: 12px; }
 .ns-new {
   position: absolute;
   top: 88px;

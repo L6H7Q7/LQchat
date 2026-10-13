@@ -148,6 +148,55 @@ async function main() {
       assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-07');
       assert.equal(await run('document.querySelector(".ns-date-end input").value'),'2026-10-13');
       assert.equal(await run('document.querySelector(".ns-date-start .ns-date-value").textContent'),'10月07日');
+      {
+        // Freeze today's local date so the seven-day wheel is reproducible on any run date.
+        await run(`window.__wheelRealDate=Date;window.Date=class extends window.__wheelRealDate {
+          constructor(...args){super(...(args.length?args:[2026,9,13,12]));}
+          static now(){return new window.__wheelRealDate(2026,9,13,12).getTime();}
+        };document.querySelector('.ns-date-start .ns-date-trigger').click()`);
+        assert.equal(await run('document.querySelector(".ns-date-wheel-dialog").open'),true);
+        assert.deepEqual(await run('[...document.querySelectorAll(".ns-wheel-day")].map(n=>n.dataset.date)'),
+          ['2026-10-07','2026-10-08','2026-10-09','2026-10-10','2026-10-11','2026-10-12']);
+        assert.equal(await run('document.querySelector(".ns-wheel-today strong").textContent'),'今日');
+        assert.equal(await run('document.querySelector(".ns-wheel-today").dataset.date'),'2026-10-13');
+        for (const width of platform === 'android' ? [320,390] : [320,1100]) {
+          await send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:platform==='android'});
+          assert.equal(await run(`(() => {const d=document.querySelector('.ns-date-wheel-dialog'),r=d.getBoundingClientRect();
+            return r.left>=0&&r.right<=innerWidth&&d.scrollWidth<=d.clientWidth+1&&
+              [...d.querySelectorAll('.ns-wheel button')].every(b=>{const q=b.getBoundingClientRect();
+                return q.left>=r.left&&q.right<=r.right&&getComputedStyle(b).animationName==='none';});})()`),true);
+        }
+        // Escape cancels without changing either boundary, and returns focus to the trigger.
+        await send('Page.bringToFront');
+        await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+        await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+        await poll(()=>run('!document.querySelector(".ns-date-wheel-dialog").open'));
+        assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-07');
+        assert.equal(await run('document.activeElement===document.querySelector(".ns-date-start .ns-date-trigger")'),true);
+        await run('document.querySelector(".ns-date-end .ns-date-trigger").click();document.querySelector(".ns-wheel-today").click()');
+        await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false"'));
+        assert.equal(await run('document.querySelector(".ns-date-end input").value'),'2026-10-13');
+        await run('document.querySelector(".ns-date-start .ns-date-trigger").click()');
+        if(process.env.LQ_WHEEL_OUTPUT) {
+          fs.mkdirSync(process.env.LQ_WHEEL_OUTPUT,{recursive:true});
+          await run('[...document.querySelectorAll("body > div")].find(n=>n.textContent.includes("测试：新增通知")&&n.style.position==="fixed")?.remove()');
+          const shot=await send('Page.captureScreenshot',{format:'png'});
+          fs.writeFileSync(path.join(process.env.LQ_WHEEL_OUTPUT,`${platform}-date-wheel.png`),Buffer.from(shot.data,'base64'));
+        }
+        await run(`document.querySelector('.ns-wheel-day[data-date="2026-10-12"]').click()`);
+        await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false"'));
+        assert.equal(await run('document.querySelector(".ns-date-wheel-dialog").open'),false);
+        assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-12');
+        assert.equal(await run('document.querySelectorAll(".ns-card").length'),100);
+        await run(`document.querySelector('.ns-date-end .ns-date-trigger').click();document.querySelector('.ns-wheel-day[data-date="2026-10-12"]').click()`);
+        await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false"'));
+        const count=await run('window.__notificationHistoryFixture.queries.length');
+        await run('document.querySelector(".ns-date-start .ns-date-trigger").click();document.querySelector(".ns-wheel-today").click()');
+        assert.equal(await run('document.querySelector(".ns-range-error").hidden'),false);
+        assert.equal(await run('window.__notificationHistoryFixture.queries.length'),count);
+        assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-12');
+        await run('window.Date=window.__wheelRealDate;delete window.__wheelRealDate');
+      }
       await run(`(() => {const a=document.querySelector('.ns-date-start input'),b=document.querySelector('.ns-date-end input');
         a.value='2026-10-12';a.dispatchEvent(new Event('change'));b.value='2026-10-12';b.dispatchEvent(new Event('change'));})()`);
       await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false" && [...document.querySelectorAll(".ns-card")].every(n=>Number(n.dataset.recordId.split("-")[1])>=100 && Number(n.dataset.recordId.split("-")[1])<200)'));
@@ -180,7 +229,7 @@ async function main() {
       assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-07');
     }
     passed = true;
-    console.log('PASS: both platforms, automatic pagination/retry, full-history date defaults, inclusive local-day filtering, invalid/empty ranges, device-switch races and narrow layout');
+    console.log('PASS: both platforms, static six-date wheel/today/cancel/selection, pagination/retry, local-day filtering, invalid/empty ranges, device-switch races and narrow layout');
     await send('Browser.close');
   } finally {
     ws?.close();
