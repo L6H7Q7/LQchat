@@ -18,6 +18,9 @@ pub struct Query {
     pub status: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
+    pub start_time: Option<i64>,
+    /// Exclusive upper bound; callers pass midnight after the selected end date.
+    pub end_time: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,6 +30,8 @@ pub struct Page {
     pub page: u32,
     pub page_size: u32,
     pub has_more: bool,
+    pub record_start_time: Option<i64>,
+    pub record_end_time: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -343,32 +348,52 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow, icon_root: Option<&std::path::Pat
     }
 }
 
-pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, String> {
-    prune(pool).await?;
-    let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(100).clamp(1, 100);
-    let mut builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-        "SELECT id,direction,event_id,source_device_id,target_device_id,device_name,package,app_name,app_icon_ref,title,text,notification_key,status,failure_reason,observed_at,created_at,updated_at,content_hash,post_time FROM notification_history WHERE 1=1",
-    );
+fn history_filters<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a Query) {
     if let Some(direction) = query
         .direction
-        .filter(|value| value == "send" || value == "receive" || value == "local")
+        .as_deref()
+        .filter(|value| matches!(*value, "send" | "receive" | "local"))
     {
         builder.push(" AND direction=").push_bind(direction);
     }
-    if let Some(device) = query.device_id.filter(|value| !value.is_empty()) {
+    if let Some(device) = query.device_id.as_deref().filter(|value| !value.is_empty()) {
         builder
             .push(" AND (source_device_id=")
-            .push_bind(device.clone())
+            .push_bind(device)
             .push(" OR target_device_id=")
             .push_bind(device)
             .push(")");
     }
-    if let Some(package) = query.package.filter(|value| !value.is_empty()) {
+    if let Some(package) = query.package.as_deref().filter(|value| !value.is_empty()) {
         builder.push(" AND package=").push_bind(package);
     }
-    if let Some(status) = query.status.filter(|value| !value.is_empty()) {
+    if let Some(status) = query.status.as_deref().filter(|value| !value.is_empty()) {
         builder.push(" AND status=").push_bind(status);
+    }
+}
+
+pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, String> {
+    prune(pool).await?;
+    if matches!((query.start_time, query.end_time), (Some(start), Some(end)) if start >= end) {
+        return Err("开始日期不能晚于结束日期".into());
+    }
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(100).clamp(1, 100);
+    // Date defaults describe all retained records for this device, not just this page/range.
+    let mut bounds = QueryBuilder::new(
+        "SELECT MIN(post_time) AS first_time,MAX(post_time) AS last_time FROM notification_history WHERE 1=1",
+    );
+    history_filters(&mut bounds, &query);
+    let bounds = bounds.build().fetch_one(pool).await.map_err(|error| error.to_string())?;
+    let mut builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+        "SELECT id,direction,event_id,source_device_id,target_device_id,device_name,package,app_name,app_icon_ref,title,text,notification_key,status,failure_reason,observed_at,created_at,updated_at,content_hash,post_time FROM notification_history WHERE 1=1",
+    );
+    history_filters(&mut builder, &query);
+    if let Some(start) = query.start_time {
+        builder.push(" AND post_time>=").push_bind(start);
+    }
+    if let Some(end) = query.end_time {
+        builder.push(" AND post_time<").push_bind(end);
     }
     builder
         .push(" ORDER BY updated_at DESC,id DESC LIMIT ")
@@ -412,6 +437,8 @@ pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, Stri
         page,
         page_size,
         has_more,
+        record_start_time: bounds.get("first_time"),
+        record_end_time: bounds.get("last_time"),
         devices,
     })
 }
@@ -562,6 +589,42 @@ mod tests {
         let page = query(&pool, Query::default()).await.unwrap();
         assert_eq!(page.records.len(), 1);
         assert_eq!(page.records[0].record_id, first);
+    }
+
+    #[tokio::test]
+    async fn date_range_filters_before_pagination_and_bounds_cover_all_device_records() {
+        let pool = pool().await;
+        let start = chrono::Utc::now().timestamp_millis() - 2 * 24 * 60 * 60 * 1000;
+        let end = start + 24 * 60 * 60 * 1000;
+        for (index, time) in [start - 1, start, end - 1, end].into_iter().enumerate() {
+            let mut item = record("dates", "date fixture", "success");
+            item.notification.notification_key = format!("dates-{index}");
+            item.notification.post_time = time;
+            upsert(&pool, &item).await.unwrap();
+        }
+        let mut other = record("other", "other device", "success");
+        other.notification.post_time = start - 1000;
+        upsert(&pool, &other).await.unwrap();
+        let first = query(&pool, Query {
+            device_id: Some("dates".into()), start_time: Some(start), end_time: Some(end),
+            page_size: Some(1), ..Default::default()
+        }).await.unwrap();
+        assert_eq!(first.record_start_time, Some(start - 1));
+        assert_eq!(first.record_end_time, Some(end));
+        assert_eq!(first.records.len(), 1);
+        assert!(first.has_more);
+        let second = query(&pool, Query {
+            device_id: Some("dates".into()), start_time: Some(start), end_time: Some(end),
+            page_size: Some(1), page: Some(2), ..Default::default()
+        }).await.unwrap();
+        assert!(!second.has_more);
+        let mut times = vec![first.records[0].notification.post_time, second.records[0].notification.post_time];
+        times.sort();
+        assert_eq!(times, vec![start, end - 1]);
+        let empty = query(&pool, Query { device_id:Some("missing".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(empty.record_start_time, None);
+        assert_eq!(empty.record_end_time, None);
+        assert!(query(&pool, Query { start_time:Some(end), end_time:Some(start), ..Default::default() }).await.is_err());
     }
 
     fn record(target: &str, text: &str, status: &str) -> Record {

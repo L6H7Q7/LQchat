@@ -176,10 +176,12 @@ body.notification-enabled #user-list {
   min-height: 0;
   overflow-anchor: none;
 }
-.ns-load-more {
+.ns-load-state {
   align-self: center;
   flex-shrink: 0;
   margin: 0 12px 8px;
+  font-size: 12px;
+  color: var(--ns-muted);
 }
 .ns-card {
   max-width: 900px;
@@ -256,6 +258,30 @@ body.notification-enabled #user-list {
   color: var(--ns-muted);
   border-top: 1px solid var(--ns-line);
 }
+.ns-date-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  background: #fbfaff;
+}
+.ns-date-control {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 10px 32px 10px 12px;
+  border: 1px solid #ded4f5;
+  border-radius: 12px;
+  cursor: pointer;
+  min-width: 0;
+}
+.ns-date-label { font-size: 12px; }
+.ns-date-value { color: var(--ns-accent); font-size: 16px; font-weight: 600; white-space: nowrap; }
+.ns-date-chevron { position: absolute; right: 12px; top: 50%; color: var(--ns-accent); transform: translateY(-50%); }
+.ns-date-control input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.ns-date-control:focus-within { outline: 2px solid var(--ns-accent); outline-offset: 2px; }
+.ns-range-error { grid-column: 1 / -1; margin: 0; color: #b3261e; text-align: left; font-size: 12px; }
 .ns-new {
   position: absolute;
   top: 88px;

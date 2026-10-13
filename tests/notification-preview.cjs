@@ -44,11 +44,15 @@ const fixture = `(() => {
         if(fixture.fail)throw Error('模拟记录读取失败');
         const snapshot=records.map(r=>JSON.parse(JSON.stringify(r)));
         if(fixture.delay)await new Promise(resolve=>setTimeout(resolve,fixture.delay));
-        const matches=snapshot.filter(r=>(!query.device_id||r.peer_id===query.device_id)&&
+        const deviceMatches=snapshot.filter(r=>(!query.device_id||r.peer_id===query.device_id)&&
           (!query.direction||r.view_kind===({send:'notification_push',receive:'notification_receive',local:'notification_local'}[query.direction])));
+        const times=deviceMatches.map(r=>r.notification.post_time);
+        const matches=deviceMatches.filter(r=>(query.start_time==null||r.notification.post_time>=query.start_time)&&
+          (query.end_time==null||r.notification.post_time<query.end_time));
         const page=query.page||1,size=query.page_size||100,offset=(page-1)*size;
         const devices=[...new Map(snapshot.filter(r=>r.view_kind!=='notification_local').map(r=>[r.peer_id,{peer_id:r.peer_id,peer_name:r.peer_name}])).values()];
-        return {records:matches.slice(offset,offset+size),devices,page,page_size:size,has_more:matches.length>offset+size};
+        return {records:matches.slice(offset,offset+size),devices,page,page_size:size,has_more:matches.length>offset+size,
+          record_start_time:times.length?Math.min(...times):null,record_end_time:times.length?Math.max(...times):null};
       }
       case 'notification_record':return records.find(r=>r.record_id===args.recordId)||null;
       case 'notification_action':

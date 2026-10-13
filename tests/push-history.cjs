@@ -39,6 +39,7 @@ async function main() {
       ws.send(JSON.stringify({ id, method, params }));
     });
     const run = async expression => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value;
+    const scrollBottom = () => run('(() => {const l=document.querySelector(".ns-cards");l.scrollTop=l.scrollHeight;l.dispatchEvent(new Event("scroll"));})()');
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await poll(() => run('!!document.querySelector("#android-receive-list .ns-device")'));
     await run(`(() => {
@@ -62,21 +63,23 @@ async function main() {
     assert.equal(await run('[...document.querySelectorAll(".ns-card .ns-title")].some(n=>n.textContent.includes("IQOO"))'), false);
     assert.equal(await run('[...document.querySelectorAll(".ns-card .ns-title")].some(n=>n.textContent==="设备断开")'), true);
     assert.equal(await run('[...document.querySelectorAll(".ns-card .ns-body")].some(n=>n.textContent==="电脑内容")'), false);
-    assert.equal(await run('document.querySelector(".ns-load-more").hidden'), false);
-    await run('document.querySelector(".ns-load-more").click()');
+    assert.equal(await run('document.querySelector(".ns-load-more")'), null);
+    await scrollBottom();
     await poll(() => run('document.querySelectorAll(".ns-card").length===200'));
-    assert.equal(await run('document.querySelector(".ns-load-more").hidden'), true);
+    assert.equal(await run('document.querySelector(".ns-detail").dataset.hasMore'), 'false');
     // Refresh loaded pages after a new notification and retain the older page.
     await run(`(() => {const f=window.__notificationHistoryFixture, first=f.records.find(r=>r.peer_id==='iqoo');
       f.records.unshift({...first,record_id:'iqoo-new',notification:{...first.notification,event_id:'iqoo-new',notification_key:'new',title:'新提醒',text:'新内容'}});f.emit();})()`);
     await poll(() => run('document.querySelector(".ns-card .ns-title").textContent==="新提醒"'));
     assert.equal(await run('document.querySelectorAll(".ns-card").length'), 200);
     // Failures keep already loaded records and offer a retry.
-    await run('window.__notificationHistoryFixture.fail=true;document.querySelector(".ns-load-more").click()');
-    await poll(() => run('document.querySelector(".ns-load-more").textContent.includes("重试")'));
+    await run('window.__notificationHistoryFixture.fail=true');
+    await scrollBottom();
+    await poll(() => run('document.querySelector(".ns-load-state").textContent.includes("重试")'));
     assert.equal(await run('document.querySelectorAll(".ns-card").length'), 200);
-    await run('window.__notificationHistoryFixture.fail=false;document.querySelector(".ns-load-more").click()');
-    await poll(() => run('document.querySelector(".ns-load-more").textContent==="加载更早记录"'));
+    await run('window.__notificationHistoryFixture.fail=false');
+    await scrollBottom();
+    await poll(() => run('document.querySelectorAll(".ns-card").length===201'));
     // A late response for one device must not populate a newly opened device.
     await run('window.__notificationHistoryFixture.delay=250;window.NotificationUI.open("pc","notification_receive");window.NotificationUI.open("iqoo","notification_receive")');
     await poll(() => run('document.querySelectorAll(".ns-card").length===100'));
@@ -121,25 +124,63 @@ async function main() {
       for (const [id, label] of [['pc','pc（接收记录）'],['iqoo','IQOO（发送与接收记录）'],['archived-sender','archived-sender（发送记录）'],['target-only','target-only（发送记录）']]) {
         assert.equal(await run(`document.querySelector('.ns-device[data-peer="${id}"] .ns-name').textContent`),label);
         await run(`window.NotificationUI.open(${JSON.stringify(id)})`);
-        await poll(()=>run('!document.querySelector(".ns-load-more").disabled'));
+        await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false"'));
         assert.equal(await run('document.querySelector(".ns-detail-title").textContent'),label);
         assert.equal(await run('document.querySelector(".ns-detail-status").textContent.split(" · ")[1]'),label.match(/（(.+)）/)[1]);
       }
       await run('document.querySelector(".ns-device[data-peer=iqoo]").click()');
       await poll(()=>run('document.querySelectorAll(".ns-card").length===3'));
       assert.deepEqual(await run('[...document.querySelectorAll(".ns-result")].map(n=>n.textContent)'),['已接收','已发送','发送 · 离线已丢弃']);
-      if(process.env.LQ_TEST_OUTPUT){
-        fs.mkdirSync(process.env.LQ_TEST_OUTPUT,{recursive:true});
-        const shot=await send('Page.captureScreenshot',{format:'png'});
-        fs.writeFileSync(path.join(process.env.LQ_TEST_OUTPUT,`unified-${platform}.png`),Buffer.from(shot.data,'base64'));
-      }
       assert.equal(await run('window.__notificationHistoryFixture.queries.some(q=>q.device_id==="iqoo"&&!q.direction)'),true);
       await run('window.NotificationUI.open("archived-sender")');
       await poll(()=>run('document.querySelectorAll(".ns-card").length===1'));
       assert.equal(await run('document.querySelector(".ns-result").textContent'),'已发送');
+      // Bounds include old records outside page one; filters use complete local days before pagination.
+      await run(`(async () => {
+        const f=window.__notificationHistoryFixture,b=f.records[0];f.delay=0;
+        f.records.splice(0,f.records.length,...Array.from({length:250},(_,i)=>({...b,record_id:'dates-'+i,
+          peer_id:'pc',peer_name:'pc',view_kind:'notification_receive',notification:{...b.notification,event_id:'dates-'+i,
+            notification_key:'dates-'+i,source_device_id:'pc',target_device_id:'preview-local',
+            post_time:new Date(2026,9,i<100?13:i<200?12:7,i===100?0:23,i===100?0:59,i===100?0:59).getTime()}})));
+        await window.NotificationUI.refresh();await window.NotificationUI.open('pc');
+      })()`);
+      await poll(()=>run('document.querySelectorAll(".ns-card").length===100'));
+      assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-07');
+      assert.equal(await run('document.querySelector(".ns-date-end input").value'),'2026-10-13');
+      assert.equal(await run('document.querySelector(".ns-date-start .ns-date-value").textContent'),'10月07日');
+      await run(`(() => {const a=document.querySelector('.ns-date-start input'),b=document.querySelector('.ns-date-end input');
+        a.value='2026-10-12';a.dispatchEvent(new Event('change'));b.value='2026-10-12';b.dispatchEvent(new Event('change'));})()`);
+      await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false" && [...document.querySelectorAll(".ns-card")].every(n=>Number(n.dataset.recordId.split("-")[1])>=100 && Number(n.dataset.recordId.split("-")[1])<200)'));
+      assert.equal(await run('document.querySelectorAll(".ns-card").length'),100);
+      assert.equal(await run('document.querySelector(".ns-detail").dataset.hasMore'),'false');
+      if(process.env.LQ_TEST_OUTPUT){
+        fs.mkdirSync(process.env.LQ_TEST_OUTPUT,{recursive:true});
+        await run('[...document.querySelectorAll("body > div")].find(n=>n.textContent.includes("测试：新增通知")&&n.style.position==="fixed")?.remove()');
+        const shot=await send('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(path.join(process.env.LQ_TEST_OUTPUT,`date-range-${platform}.png`),Buffer.from(shot.data,'base64'));
+      }
+      const callsBeforeInvalid=await run('window.__notificationHistoryFixture.queries.length');
+      await run(`(() => {const a=document.querySelector('.ns-date-start input');a.value='2026-10-13';a.dispatchEvent(new Event('change'));})()`);
+      assert.equal(await run('document.querySelector(".ns-range-error").hidden'),false);
+      assert.equal(await run('window.__notificationHistoryFixture.queries.length'),callsBeforeInvalid);
+      await run(`(() => {const a=document.querySelector('.ns-date-start input'),b=document.querySelector('.ns-date-end input');
+        a.value='2026-10-08';b.value='2026-10-08';a.dispatchEvent(new Event('change'));})()`);
+      await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false" && document.querySelectorAll(".ns-card").length===0'));
+      assert.equal(await run('document.querySelector(".ns-empty").textContent'),'所选日期范围内暂无记录。');
+      for(const width of [320,390,1100]) {
+        await send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:platform==='android'});
+        assert.equal(await run('document.querySelector(".ns-footer").scrollWidth<=document.querySelector(".ns-footer").clientWidth+1'),true);
+      }
+      await run('window.NotificationUI.open("target-only")');
+      await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false"'));
+      assert.equal(await run('document.querySelector(".ns-date-start input").value'),'');
+      await run(`(() => {const a=document.querySelector('.ns-date-start input'),b=document.querySelector('.ns-date-end input');
+        a.value='2026-10-07';a.dispatchEvent(new Event('change'));b.value='2026-10-13';b.dispatchEvent(new Event('change'));})()`);
+      await poll(()=>run('document.querySelector(".ns-detail").dataset.loading==="false" && document.querySelector(".ns-range-error").hidden'));
+      assert.equal(await run('document.querySelector(".ns-date-start input").value'),'2026-10-07');
     }
     passed = true;
-    console.log('PASS: per-device history, 200/300 pagination, battery/route/reminder display, offline sources, refresh, retry, device-switch races, old notification activation, narrow layout');
+    console.log('PASS: both platforms, automatic pagination/retry, full-history date defaults, inclusive local-day filtering, invalid/empty ranges, device-switch races and narrow layout');
     await send('Browser.close');
   } finally {
     ws?.close();

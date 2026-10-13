@@ -11,6 +11,7 @@ window.NotificationUI = (() => {
     current = null;
   let detailPage = 1, detailHasMore = false, detailLoading = false,
     detailError = false, detailRequest = 0;
+  let detailDates = { start: "", end: "", manual: false }, detailRetryAppend = false;
   let config = {
     push_enabled: false,
     receive_enabled: false,
@@ -293,6 +294,8 @@ window.NotificationUI = (() => {
     detailHasMore = false;
     detailLoading = true;
     detailError = false;
+    detailDates = { start: "", end: "", manual: false };
+    panel.querySelector(".ns-range-error").hidden = true;
     panel.hidden = false;
     document.body.classList.add("notification-open");
     if (isNarrow() && location.hash !== "#notifications")
@@ -306,6 +309,53 @@ window.NotificationUI = (() => {
   function close() {
     if (location.hash === "#notifications") history.back();
     else leave();
+  }
+  const dateValue = (time) => {
+    if (time == null) return "";
+    const date = new Date(time);
+    return Number.isFinite(date.getTime())
+      ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : "";
+  };
+  function dateTime(value, nextDay = false) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day + (nextDay ? 1 : 0)).getTime();
+  }
+  function renderDateControls() {
+    for (const kind of ["start", "end"]) {
+      const control = panel.querySelector(`.ns-date-${kind}`), value = detailDates[kind];
+      control.querySelector("input").value = value;
+      control.querySelector(".ns-date-value").textContent = value
+        ? `${value.slice(5, 7)}月${value.slice(8, 10)}日` : "选择日期";
+    }
+  }
+  function changeDateRange() {
+    const start = panel.querySelector(".ns-date-start input").value,
+      end = panel.querySelector(".ns-date-end input").value,
+      error = panel.querySelector(".ns-range-error");
+    if (!start || !end || start > end) {
+      error.textContent = !start || !end ? "请选择开始和结束日期" : "开始日期不能晚于结束日期";
+      error.hidden = false;
+      if (start && end) renderDateControls();
+      else for (const kind of ["start", "end"]) {
+        const control = panel.querySelector(`.ns-date-${kind}`), value = control.querySelector("input").value;
+        control.querySelector(".ns-date-value").textContent = value
+          ? `${value.slice(5, 7)}月${value.slice(8, 10)}日` : "选择日期";
+      }
+      return;
+    }
+    error.hidden = true;
+    detailDates = { start, end, manual: true };
+    detailRecords = [];
+    detailPage = 1;
+    detailHasMore = false;
+    panel.querySelector(".ns-cards").scrollTop = 0;
+    refreshDetailRecords();
+  }
+  function loadMoreOnScroll() {
+    if (!current || detailLoading || (!detailHasMore && !detailError)) return;
+    const list = panel.querySelector(".ns-cards");
+    if (list.scrollHeight - list.scrollTop - list.clientHeight <= 120)
+      refreshDetailRecords(detailError ? detailRetryAppend : true);
   }
   function renderDetail() {
     if (!current) return;
@@ -322,10 +372,13 @@ window.NotificationUI = (() => {
         ? r.view_kind === "notification_local"
         : r.view_kind === "notification_push" || r.view_kind === "notification_receive"),
     );
-    const moreButton = panel.querySelector(".ns-load-more");
-    moreButton.hidden = !detailHasMore && !detailError;
-    moreButton.disabled = detailLoading;
-    moreButton.textContent = detailLoading ? "正在读取…" : detailError ? "读取失败，点击重试" : "加载更早记录";
+    renderDateControls();
+    panel.dataset.loading = String(detailLoading);
+    panel.dataset.hasMore = String(detailHasMore);
+    const loadState = panel.querySelector(".ns-load-state");
+    loadState.hidden = !detailLoading && !detailError;
+    loadState.textContent = detailLoading ? "正在读取…" : "读取失败，下滑重试";
+    list.setAttribute("aria-busy", String(detailLoading));
     const signature = JSON.stringify([current, entries, detailLoading, detailError]);
     if (signature === detailSignature) return;
     detailSignature = signature;
@@ -338,7 +391,7 @@ window.NotificationUI = (() => {
     let added = false;
     for (const entry of entries) {
       const n = entry.notification,
-        key = entry.record_id || (push
+        key = entry.record_id || (entry.view_kind === "notification_push"
           ? n.event_id
           : JSON.stringify([n.source_device_id, n.package, n.notification_key]));
       keys.add(key);
@@ -423,7 +476,8 @@ window.NotificationUI = (() => {
         el(
           "div",
           "ns-empty",
-          detailLoading ? "正在读取记录…" : detailError ? "记录读取失败，请重试。" : local
+          detailLoading ? "正在读取记录…" : detailError ? "记录读取失败，下滑重试。" : detailDates.manual
+            ? "所选日期范围内暂无记录。" : local
             ? "暂无本机记录。电量、自定义通知及设备连接变化会显示在这里。"
             : "暂无与此设备有关的通知记录。可在设置中配置推送与接收。",
         ),
@@ -440,6 +494,7 @@ window.NotificationUI = (() => {
     const lastPage = append ? detailPage + 1 : detailPage;
     detailLoading = true;
     detailError = false;
+    detailRetryAppend = append;
     renderDetail();
     try {
       let loaded = append ? [...detailRecords] : [], hasMore = false, actualPage = 1;
@@ -447,9 +502,16 @@ window.NotificationUI = (() => {
         const result = await invoke("notification_records", { query: {
           device_id: selected.id,
           ...(selected.kind === "notification_local" ? { direction: "local" } : {}),
+          ...(detailDates.manual ? {
+            start_time: dateTime(detailDates.start), end_time: dateTime(detailDates.end, true),
+          } : {}),
           page: pageNumber, page_size: 100,
         } });
         if (request !== detailRequest) return;
+        if (!detailDates.manual) {
+          detailDates.start = dateValue(result.record_start_time);
+          detailDates.end = dateValue(result.record_end_time);
+        }
         loaded.push(...(Array.isArray(result) ? result : result.records || []));
         hasMore = !Array.isArray(result) && !!result.has_more;
         actualPage = pageNumber;
@@ -466,6 +528,10 @@ window.NotificationUI = (() => {
       if (request === detailRequest) {
         detailLoading = false;
         renderDetail();
+        if (!detailError) requestAnimationFrame(() => {
+          const list = panel.querySelector(".ns-cards");
+          if (request === detailRequest && list.scrollHeight <= list.clientHeight + 1) loadMoreOnScroll();
+        });
       }
     }
   }
@@ -995,7 +1061,7 @@ window.NotificationUI = (() => {
     panel.append(
       head,
       el("div", "ns-cards"),
-      button("加载更早记录", () => refreshDetailRecords(!detailError), "ns-load-more ns-button"),
+      el("p", "ns-load-state"),
       button(
         "有新通知",
         () => {
@@ -1004,12 +1070,27 @@ window.NotificationUI = (() => {
         },
         "ns-new ns-button",
       ),
-      el(
-        "footer",
-        "ns-footer",
-        "通知查看记录保留七天 · 此视图不能发送聊天或文件",
-      ),
     );
+    const footer = el("footer", "ns-footer ns-date-range");
+    for (const [kind, label] of [["start", "开始日期"], ["end", "结束日期"]]) {
+      const control = el("label", `ns-date-control ns-date-${kind}`), input = el("input");
+      input.type = "date";
+      input.setAttribute("aria-label", label);
+      input.addEventListener("change", changeDateRange);
+      input.addEventListener("click", () => { try { input.showPicker?.(); } catch (_) {} });
+      control.append(el("span", "ns-date-label", label), el("span", "ns-date-value", "选择日期"), el("span", "ns-date-chevron", "⌄"), input);
+      footer.append(control);
+    }
+    const rangeError = el("p", "ns-range-error");
+    rangeError.hidden = true;
+    rangeError.setAttribute("role", "alert");
+    footer.append(rangeError);
+    panel.append(footer);
+    const cards = panel.querySelector(".ns-cards");
+    cards.addEventListener("scroll", loadMoreOnScroll, { passive: true });
+    cards.addEventListener("wheel", (event) => { if (event.deltaY > 0) requestAnimationFrame(loadMoreOnScroll); }, { passive: true });
+    cards.addEventListener("touchend", loadMoreOnScroll, { passive: true });
+    panel.querySelector(".ns-load-state").setAttribute("role", "status");
     panel.querySelector(".ns-new").hidden = true;
     main.append(panel);
     new ResizeObserver(() => {
