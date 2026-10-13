@@ -176,6 +176,11 @@ body.notification-enabled #user-list {
   min-height: 0;
   overflow-anchor: none;
 }
+.ns-load-more {
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 12px 8px;
+}
 .ns-card {
   max-width: 900px;
   margin: 4px auto 26px;
@@ -238,6 +243,8 @@ body.notification-enabled #user-list {
   margin-top: 8px;
 }
 .ns-result:empty { display: none; }
+.ns-result-send { color: var(--ns-accent); }
+.ns-result-receive { color: #138d67; }
 .ns-more {
   font-size: 12px;
 }

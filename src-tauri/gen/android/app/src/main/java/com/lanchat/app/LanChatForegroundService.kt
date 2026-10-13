@@ -1038,6 +1038,7 @@ class LanChatForegroundService : Service() {
     }
 
     private fun postNotificationRouteDisconnected(peer: NotificationRoutePeerState) {
+        recordNotificationRouteHistory(peer, connected = false)
         val body = notificationRouteDisconnectedText(peer.name)
         val notification = NotificationCompat.Builder(this, MESSAGE_CHANNEL)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -1057,6 +1058,7 @@ class LanChatForegroundService : Service() {
     }
 
     private fun postNotificationRouteConnected(peer: NotificationRoutePeerState) {
+        recordNotificationRouteHistory(peer, connected = true)
         val body = notificationRouteConnectedText(peer.name)
         val notification = NotificationCompat.Builder(this, MESSAGE_CHANNEL)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -1073,6 +1075,17 @@ class LanChatForegroundService : Service() {
         runCatching {
             notificationManager.notify(disconnectNotificationIdFor(peer.id), notification)
         }.onFailure { android.util.Log.w(TAG, "设备连接提醒发送失败", it) }
+    }
+
+    private fun recordNotificationRouteHistory(peer: NotificationRoutePeerState, connected: Boolean) {
+        // Save the observation even if Android blocks the system notification.
+        runCatching {
+            NotificationSyncNative.recordRoute(
+                JSONObject().put("peer_id", peer.id).put("peer_name", peer.name)
+                    .put("event_id", UUID.randomUUID().toString()).put("connected", connected)
+                    .put("post_time", System.currentTimeMillis()).toString(),
+            )
+        }.onFailure { android.util.Log.w(TAG, "设备连接状态记录失败", it) }
     }
 
     private fun dataNotificationSoundUri(): Uri = Uri.parse(

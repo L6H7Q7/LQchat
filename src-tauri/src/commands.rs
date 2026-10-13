@@ -1955,7 +1955,9 @@ pub async fn custom_reminder_settings(
         }
         Ok(result)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(windows)]
+    { crate::local_reminders::command(&state.pool, request).await }
+    #[cfg(not(any(target_os = "android", windows)))]
     {
         let _ = (state, request);
         Err("仅 Android 支持自定义通知".to_string())
@@ -2041,22 +2043,27 @@ fn call_android_activity_string_arg(method: &str, input: &str) -> Result<String,
 }
 
 #[tauri::command]
-pub fn get_background_runtime_settings() -> Result<serde_json::Value, String> {
+pub async fn get_background_runtime_settings(_state: tauri::State<'_, crate::db::DbState>) -> Result<serde_json::Value, String> {
+    #[cfg(windows)]
+    return crate::local_reminders::runtime_settings(&_state.pool).await;
     #[cfg(target_os = "android")]
     return call_android_activity_string("getBackgroundRuntimeSettings")
         .and_then(|value| serde_json::from_str(&value).map_err(|error| error.to_string()));
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", windows)))]
     Ok(serde_json::json!({}))
 }
 
 #[tauri::command]
-pub fn set_background_runtime_settings(
+pub async fn set_background_runtime_settings(
+    _state: tauri::State<'_, crate::db::DbState>,
     settings: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    #[cfg(windows)]
+    return crate::local_reminders::save_runtime(&_state.pool, settings).await;
     #[cfg(target_os = "android")]
     return call_android_activity_string_arg("setBackgroundRuntimeSettings", &settings.to_string())
         .and_then(|value| serde_json::from_str(&value).map_err(|error| error.to_string()));
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", windows)))]
     Ok(settings)
 }
 

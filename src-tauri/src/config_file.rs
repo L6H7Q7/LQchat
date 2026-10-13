@@ -213,6 +213,52 @@ pub fn get_lang_from_config() -> Option<String> {
     read_config().lang
 }
 
+fn resolve_menu_language(saved: Option<&str>, system: Option<&str>) -> &'static str {
+    match saved {
+        Some("zh") => "zh",
+        Some("en") => "en",
+        _ => match system {
+            Some(lang) if lang.to_ascii_lowercase().starts_with("en") => "en",
+            _ => "zh",
+        },
+    }
+}
+
+/// Windows UI language is independent of a launcher's POSIX LANG variable.
+pub fn desktop_menu_language() -> &'static str {
+    let saved = get_lang_from_config();
+    #[cfg(windows)]
+    {
+        let language = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+        let system = match language & 0x03ff {
+            0 => None,
+            4 => Some("zh"),
+            _ => Some("en"),
+        };
+        resolve_menu_language(saved.as_deref(), system)
+    }
+    #[cfg(not(windows))]
+    {
+        let system = std::env::var("LANG").ok();
+        resolve_menu_language(saved.as_deref(), system.as_deref())
+    }
+}
+
+#[cfg(test)]
+mod menu_language_tests {
+    use super::*;
+
+    #[test]
+    fn saved_menu_language_wins_and_posix_default_is_not_english() {
+        assert_eq!(resolve_menu_language(Some("en"), Some("zh-CN")), "en");
+        assert_eq!(resolve_menu_language(Some("zh"), Some("en-US")), "zh");
+        assert_eq!(resolve_menu_language(None, Some("zh-CN")), "zh");
+        assert_eq!(resolve_menu_language(None, Some("en-US")), "en");
+        assert_eq!(resolve_menu_language(None, Some("C.UTF-8")), "zh");
+        assert_eq!(resolve_menu_language(Some("auto"), None), "zh");
+    }
+}
+
 /// 保存语言到配置
 pub fn save_lang_to_config(lang: &str) -> Result<(), String> {
     if lang != "zh" && lang != "en" {

@@ -3,9 +3,14 @@ window.NotificationUI = (() => {
   let enabled = false,
     android = false,
     localId = "",
+    localName = "",
     peers = [],
     records = [],
+    historyDevices = [],
+    detailRecords = [],
     current = null;
+  let detailPage = 1, detailHasMore = false, detailLoading = false,
+    detailError = false, detailRequest = 0;
   let config = {
     push_enabled: false,
     receive_enabled: false,
@@ -15,6 +20,7 @@ window.NotificationUI = (() => {
     target_device_ids: [],
   };
   let detailSignature = "";
+  let recordDirections = new Map(), recordsRequest = 0;
   let info = {},
     dialog,
     pushDetailsDialog,
@@ -23,7 +29,6 @@ window.NotificationUI = (() => {
     receiveDialog,
     panel,
     welcome,
-    pushList,
     receiveList,
     refreshTimer,
     busy = false;
@@ -91,7 +96,9 @@ window.NotificationUI = (() => {
     window.__TAURI__.core.invoke(command, args);
   const peerFor = (id) => peers.find((p) => p.id === id);
   const nameFor = (id) =>
-    peerFor(id)?.name || records.find((r) => r.peer_id === id)?.peer_name || id;
+    (id === localId ? document.getElementById("my-name")?.textContent || localName : "") ||
+    peerFor(id)?.name || historyDevices.find((r) => r.peer_id === id)?.peer_name ||
+    records.find((r) => r.peer_id === id)?.peer_name || id;
   const pushSourcePeers = () =>
     peers.filter(
       (peer) =>
@@ -99,8 +106,26 @@ window.NotificationUI = (() => {
         Array.isArray(peer.notification_push_target_device_ids) &&
         peer.notification_push_target_device_ids.includes(localId),
     );
+  function recordTypeFor(id) {
+    let directions = recordDirections.get(id);
+    if (!directions) {
+      const entries = records.filter((r) => r.peer_id === id);
+      directions = {
+        send: entries.some((r) => r.view_kind === "notification_push"),
+        receive: entries.some((r) => r.view_kind === "notification_receive"),
+      };
+      if (!directions.send && !directions.receive) {
+        directions.send = config.target_device_ids.includes(id);
+        directions.receive = pushSourcePeers().some((peer) => peer.id === id);
+      }
+    }
+    return directions.send && directions.receive ? "发送与接收记录"
+      : directions.send ? "发送记录"
+      : directions.receive ? "接收记录" : "通知记录";
+  }
+  const recordTitleFor = (id) => `${nameFor(id)}（${recordTypeFor(id)}）`;
   const isNarrow = () => android || innerWidth < 960;
-  function group(title, sending) {
+  function group(title) {
     const box = el("section", "ns-group");
     const head = el("div", "ns-group-heading");
     const disclosure = button(
@@ -115,7 +140,7 @@ window.NotificationUI = (() => {
     disclosure.setAttribute("aria-expanded", "true");
     head.append(disclosure, button("设置", openSettings, "ns-text-button"));
     const list = el("div", "ns-device-list");
-    list.dataset.kind = sending ? "notification_push" : "notification_receive";
+    list.dataset.kind = "notification_device";
     box.append(head, list);
     return { box, list };
   }
@@ -138,7 +163,7 @@ window.NotificationUI = (() => {
       row.dataset.peer = peer.id;
       const copy = el("span", "ns-device-copy");
       copy.append(
-        el("strong", "ns-name", peer.name || peer.id),
+        el("strong", "ns-name", recordTitleFor(peer.id)),
         el(
           "small",
           "ns-address",
@@ -165,13 +190,13 @@ window.NotificationUI = (() => {
   }
   function renderDevices() {
     if (!enabled) return;
-    const fill = (list, ids, kind) => {
+    const fill = (list, ids) => {
       const wanted = new Set(ids);
       for (const row of [...list.children])
         if (!wanted.has(row.dataset.peer)) row.remove();
-      if (android && kind === "notification_receive") {
+      if (android) {
         const count = document.getElementById("android-receive-count");
-        if (count) count.textContent = `信息接收 ${ids.length} 台设备`;
+        if (count) count.textContent = `通知设备 ${ids.length} 台`;
       }
       if (!ids.length) {
         if (android) {
@@ -183,9 +208,7 @@ window.NotificationUI = (() => {
             el(
               "p",
               "ns-empty-small",
-              kind === "notification_push"
-                ? "在设置中选择推送设备"
-                : config.receive_enabled
+              config.receive_enabled
                   ? "等待其他设备推送通知"
                   : "尚未开启信息接收",
             ),
@@ -199,7 +222,7 @@ window.NotificationUI = (() => {
       for (const id of ids) {
         let row = [...list.children].find((n) => n.dataset.peer === id);
         if (!row) {
-          row = button("", () => open(id, kind), "ns-device");
+          row = button("", () => open(id), "ns-device");
           row.dataset.peer = id;
           const copy = el("span", "ns-device-copy");
           copy.append(el("strong", "ns-name"), el("small", "ns-address"));
@@ -210,40 +233,39 @@ window.NotificationUI = (() => {
         }
         const peer = peerFor(id),
           name = nameFor(id),
-          online = peer && !peer.is_offline;
-        const label = android
-          ? name
-          : `${name}（${kind === "notification_push" ? "信息推送" : "信息接收"}）`;
+          online = id === localId || peer && !peer.is_offline;
+        const label = id === localId ? `${name}（本机）` : recordTitleFor(id);
         row.querySelector(".ns-name").textContent = label;
         row.title = label;
         row.querySelector(".ns-address").textContent =
-          `${peer?.addr || "当前地址未知"} · ${online ? "在线" : "离线"}`;
+          id === localId ? "本机通知及设备连接记录" : `${peer?.addr || "当前地址未知"} · ${online ? "在线" : "离线"}`;
         const badge = row.querySelector(".ns-badge");
         badge.textContent = android
           ? "›"
-          : kind === "notification_push"
-            ? `${config.push_enabled ? "已开启" : "已暂停"} · ${online ? "在线" : "离线"}`
-            : online
+          : id === localId ? "本机" : online
               ? "在线"
               : "离线";
         badge.classList.toggle("online", !!online);
         row.classList.toggle("online", !!online);
         row.classList.toggle(
           "selected",
-          current?.id === id && current?.kind === kind,
+          current?.id === id,
         );
         row.setAttribute(
           "aria-pressed",
-          String(current?.id === id && current?.kind === kind),
+          String(current?.id === id),
         );
       }
     };
     fill(
       receiveList,
-      android
-        ? pushSourcePeers().map((peer) => peer.id)
-        : [...new Set(records.filter((r) => r.view_kind === "notification_receive").map((r) => r.peer_id))],
-      "notification_receive",
+      [...new Set([
+        localId,
+        ...config.target_device_ids,
+        ...pushSourcePeers().map((peer) => peer.id),
+        ...historyDevices.map((peer) => peer.peer_id),
+        ...records.filter((r) => r.view_kind !== "notification_local").map((r) => r.peer_id),
+      ])],
     );
     renderPushSourcesPage();
     if (current) renderDetail();
@@ -257,14 +279,20 @@ window.NotificationUI = (() => {
   function leave() {
     if (!enabled) return;
     current = null;
+    ++detailRequest;
     panel.hidden = true;
     document.body.classList.remove("notification-open");
     renderDevices();
   }
-  function open(id, kind) {
+  function open(id) {
     if (!enabled) return;
     if (window.currentChatPeer) performCloseChatUI();
-    current = { id, kind };
+    current = { id, kind: id === localId ? "notification_local" : "notification_device" };
+    detailRecords = [];
+    detailPage = 1;
+    detailHasMore = false;
+    detailLoading = true;
+    detailError = false;
     panel.hidden = false;
     document.body.classList.add("notification-open");
     if (isNarrow() && location.hash !== "#notifications")
@@ -273,6 +301,7 @@ window.NotificationUI = (() => {
     panel.querySelector(".ns-cards").replaceChildren();
     panel.querySelector(".ns-cards").scrollTop = 0;
     renderDevices();
+    return refreshDetailRecords();
   }
   function close() {
     if (location.hash === "#notifications") history.back();
@@ -281,17 +310,23 @@ window.NotificationUI = (() => {
   function renderDetail() {
     if (!current) return;
     const p = peerFor(current.id),
-      push = current.kind === "notification_push";
+      local = current.kind === "notification_local";
     panel.querySelector(".ns-detail-title").textContent =
-      `${nameFor(current.id)}（${push ? "信息推送" : "信息接收"}）`;
+      local ? `${nameFor(current.id)}（本机记录）` : recordTitleFor(current.id);
     panel.querySelector(".ns-detail-status").textContent =
-      `${p && !p.is_offline ? "设备在线" : "设备离线，不会补收离线通知"} · ${push ? (config.push_enabled ? "推送已开启" : "推送已暂停") : config.receive_enabled ? "接收已开启" : "接收已关闭"}`;
+      local ? "本机电量、自定义通知及设备连接记录" : `${p && !p.is_offline ? "设备在线" : "设备离线"} · ${recordTypeFor(current.id)}`;
     const list = panel.querySelector(".ns-cards"),
       oldTop = list.scrollTop;
-    const entries = records.filter(
-      (r) => r.peer_id === current.id && r.view_kind === current.kind,
+    const entries = detailRecords.filter(
+      (r) => r.peer_id === current.id && (local
+        ? r.view_kind === "notification_local"
+        : r.view_kind === "notification_push" || r.view_kind === "notification_receive"),
     );
-    const signature = JSON.stringify([current, entries]);
+    const moreButton = panel.querySelector(".ns-load-more");
+    moreButton.hidden = !detailHasMore && !detailError;
+    moreButton.disabled = detailLoading;
+    moreButton.textContent = detailLoading ? "正在读取…" : detailError ? "读取失败，点击重试" : "加载更早记录";
+    const signature = JSON.stringify([current, entries, detailLoading, detailError]);
     if (signature === detailSignature) return;
     detailSignature = signature;
     const anchor = [...list.children].find(
@@ -364,12 +399,19 @@ window.NotificationUI = (() => {
         ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
         : "";
       card.querySelector(".ns-time").title = Number.isFinite(date.getTime()) ? date.toLocaleString() : "";
-      card.querySelector(".ns-title").textContent = n.title;
+      // The detail header already identifies the device; keep original app/reminder titles.
+      const lq = n.package === "com.lanchat.app" || n.package === "com.lanchat.app.acceptance";
+      const battery = lq && n.title === "电量提醒" && n.notification_key?.startsWith("lq-battery-");
+      card.querySelector(".ns-title").textContent = battery ? "电量" : n.title;
       card.querySelector(".ns-body").textContent = n.text;
       // Check rendered overflow after insertion; short multi-line text can also be clipped.
-      card.querySelector(".ns-result").textContent = push
-        ? statusText[entry.status] || "失败"
-        : "";
+      const sent = entry.view_kind === "notification_push";
+      const result = card.querySelector(".ns-result");
+      result.textContent = local ? "" : sent
+        ? entry.status === "success" ? "已发送" : `发送 · ${statusText[entry.status] || "失败"}`
+        : entry.status === "success" ? "已接收" : `接收 · ${statusText[entry.status] || "处理中"}`;
+      result.classList.toggle("ns-result-send", !local && sent);
+      result.classList.toggle("ns-result-receive", !local && !sent);
       list.append(card);
       const body = card.querySelector(".ns-body");
       card.querySelector(".ns-more").hidden = !card.classList.contains("expanded") && body.scrollHeight <= body.clientHeight + 1;
@@ -381,11 +423,9 @@ window.NotificationUI = (() => {
         el(
           "div",
           "ns-empty",
-          push
-            ? "暂无推送记录。仅推送已允许 App 的新通知。"
-            : config.receive_enabled
-              ? "尚未收到通知。请在手机推送设置中勾选本机。"
-              : "接收已关闭。可在接收设置中开启。",
+          detailLoading ? "正在读取记录…" : detailError ? "记录读取失败，请重试。" : local
+            ? "暂无本机记录。电量、自定义通知及设备连接变化会显示在这里。"
+            : "暂无与此设备有关的通知记录。可在设置中配置推送与接收。",
         ),
       );
     list.scrollTop = oldTop;
@@ -394,12 +434,64 @@ window.NotificationUI = (() => {
     const newer = panel.querySelector(".ns-new");
     if (added && oldTop > 30) newer.hidden = false;
   }
+  async function refreshDetailRecords(append = false) {
+    if (!current) return;
+    const selected = { ...current }, request = ++detailRequest;
+    const lastPage = append ? detailPage + 1 : detailPage;
+    detailLoading = true;
+    detailError = false;
+    renderDetail();
+    try {
+      let loaded = append ? [...detailRecords] : [], hasMore = false, actualPage = 1;
+      for (let pageNumber = append ? lastPage : 1; pageNumber <= lastPage; pageNumber++) {
+        const result = await invoke("notification_records", { query: {
+          device_id: selected.id,
+          ...(selected.kind === "notification_local" ? { direction: "local" } : {}),
+          page: pageNumber, page_size: 100,
+        } });
+        if (request !== detailRequest) return;
+        loaded.push(...(Array.isArray(result) ? result : result.records || []));
+        hasMore = !Array.isArray(result) && !!result.has_more;
+        actualPage = pageNumber;
+        if (!hasMore) break;
+      }
+      detailRecords = [...new Map(loaded.map((entry) => [
+        entry.record_id || entry.notification.event_id, entry,
+      ])).values()];
+      detailPage = actualPage;
+      detailHasMore = hasMore;
+    } catch (_) {
+      if (request === detailRequest) detailError = true;
+    } finally {
+      if (request === detailRequest) {
+        detailLoading = false;
+        renderDetail();
+      }
+    }
+  }
   async function refreshRecords() {
     if (!enabled) return;
+    const request = ++recordsRequest;
     try {
       const page = await invoke("notification_records", { query: { page: 1, page_size: 100 } });
-      records = Array.isArray(page) ? page : page.records || [];
+      const nextRecords = Array.isArray(page) ? page : page.records || [];
+      const nextDevices = Array.isArray(page) ? [] : page.devices || [];
+      // Probe each direction so older records outside page one still determine the label.
+      const directions = await Promise.all(nextDevices.filter((peer) => peer.peer_id !== localId).map(async (peer) => {
+        const results = await Promise.all(["send", "receive"].map((direction) =>
+          invoke("notification_records", { query: {
+            device_id: peer.peer_id, direction, page: 1, page_size: 1,
+          } }),
+        ));
+        const present = (result) => (Array.isArray(result) ? result : result.records || []).length > 0;
+        return [peer.peer_id, { send: present(results[0]), receive: present(results[1]) }];
+      }));
+      if (request !== recordsRequest) return;
+      records = nextRecords;
+      historyDevices = nextDevices;
+      recordDirections = new Map(directions);
       renderDevices();
+      if (current) await refreshDetailRecords();
     } catch (_) {
       /* Keep the current view when the bridge is temporarily unavailable. */
     }
@@ -410,14 +502,22 @@ window.NotificationUI = (() => {
     if (!source) return;
     try { await invoke("notification_pending_activation"); } catch (_) {}
     await refreshRecords();
+    let exact;
     if (recordId && !records.some((item) => item.record_id === recordId)) {
       try {
-        const exact = await invoke("notification_record", { recordId });
+        exact = await invoke("notification_record", { recordId });
         if (exact) records.unshift(exact);
       } catch (_) {}
     }
-    open(source, "notification_receive");
+    const kind = source === localId ? "notification_local" : "notification_device";
+    await open(source);
+    if (current?.id !== source || current?.kind !== kind) return;
+    if (exact && !detailRecords.some((item) => item.record_id === recordId)) {
+      detailRecords.push(exact);
+      renderDetail();
+    }
     requestAnimationFrame(() => {
+      if (current?.id !== source || current?.kind !== kind) return;
       const card = recordId
         ? panel.querySelector(`[data-record-id="${CSS.escape(recordId)}"]`)
         : null;
@@ -691,6 +791,7 @@ window.NotificationUI = (() => {
       const ids = peers
         .filter((peer) => peer.id !== localId && !peer.is_offline && peer.notification_receive_enabled === true)
         .map((peer) => peer.id);
+      for (const id of config.target_device_ids) if (!ids.includes(id)) ids.push(id);
       for (const id of ids) {
         const p = peerFor(id);
         const row = toggleRow(
@@ -726,7 +827,9 @@ window.NotificationUI = (() => {
       }, "ns-app-picker-entry");
       appPushRow.firstElementChild.replaceWith(appPickerEntry);
       content.append(
-        appPushRow,
+        android ? appPushRow : toggleRow("信息推送总开关", config.push_enabled, async (input) => {
+          if (!(await save({ ...config, push_enabled: input.checked }, pushDetailsDialog))) input.checked = !input.checked;
+        }),
         toggleRow("自定义通知推送", config.lq_reminder_push_enabled, async (input) => {
           if (!(await save({ ...config, lq_reminder_push_enabled: input.checked }, pushDetailsDialog)))
             input.checked = !input.checked;
@@ -785,6 +888,9 @@ window.NotificationUI = (() => {
       return;
     }
     renderReceiveSettings(dialog);
+    dialog.querySelector(".ns-settings-content").append(button("推送设置", () => {
+      dialog.close(); openPushDetails();
+    }));
   }
   async function openReceiveSettings() {
     if (!enabled || !android || !receiveDialog) return;
@@ -845,6 +951,7 @@ window.NotificationUI = (() => {
     android = info.platform === "android";
     config = info.settings;
     localId = await apiGetMyId();
+    localName = await apiGetMyName();
     document.body.classList.add("notification-enabled");
     if (!android) document.body.classList.add("windows-app");
     const main = document.querySelector(".main-content"),
@@ -860,7 +967,7 @@ window.NotificationUI = (() => {
       chatGroup.append(button("清除", () => window.clearOfflinePeerDevices?.(), "ns-clear-offline-peers"));
       sidebar.insertBefore(chatGroup, document.getElementById("android-listening"));
       chatGroup.append(chatList);
-      const incoming = group("信息接收设备", false);
+      const incoming = group("通知设备");
       receiveList = incoming.list;
       sidebar.insertBefore(
         incoming.box,
@@ -888,6 +995,7 @@ window.NotificationUI = (() => {
     panel.append(
       head,
       el("div", "ns-cards"),
+      button("加载更早记录", () => refreshDetailRecords(!detailError), "ns-load-more ns-button"),
       button(
         "有新通知",
         () => {
@@ -997,7 +1105,7 @@ window.NotificationUI = (() => {
       );
       dialog.querySelector(".ns-save-status").setAttribute("role", "status");
       document.body.append(dialog);
-      const receiveSettingsButton = button("信息接收设置", openSettings);
+      const receiveSettingsButton = button("信息推送与接收设置", openSettings);
       receiveSettingsButton.classList.add("desktop-receive-settings");
       const status = document.querySelector("#settings-panel > .settings-content > .settings-auto-status");
       if (status) status.before(receiveSettingsButton);
@@ -1005,7 +1113,12 @@ window.NotificationUI = (() => {
       if (!document.querySelector("#settings-panel .ns-button"))
         document
           .getElementById("settings-panel")
-          ?.append(button("信息接收设置", openSettings));
+          ?.append(button("信息推送与接收设置", openSettings));
+      pushDetailsDialog = document.getElementById("android-push-details-panel");
+      pushDetailsDialog.classList.remove("android-only");
+      pushDetailsDialog.classList.add("desktop-reminder-panel");
+      pushDetailsDialog.querySelector("header")?.classList.remove("android-only");
+      document.getElementById("android-push-details-back-btn").addEventListener("click", () => history.back());
     }
     window.addEventListener("popstate", () => {
       const inSettings = android && ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#background-options", "#download-options"].includes(location.hash);
@@ -1049,7 +1162,10 @@ window.NotificationUI = (() => {
     peers = value.filter((p) => p.id !== localId);
     const nextTargets = peers.filter((peer) => !peer.is_offline && peer.notification_receive_enabled === true)
       .map((peer) => `${peer.id}:${peer.name}:${peer.addr}`).sort().join("|");
-    if (android && dialog && !busy && previousTargets !== nextTargets) renderSettings();
+    if (dialog && !busy && previousTargets !== nextTargets) {
+      if (android) renderSettings();
+      else if (pushDetailsDialog?.classList.contains("is-open")) renderPushDetails();
+    }
     renderDevices();
   }
   async function refreshSettings() {

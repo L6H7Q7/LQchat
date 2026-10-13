@@ -120,8 +120,18 @@ pub struct Peer {
 }
 
 // 全局在线用户列表
+#[derive(Debug)]
+pub(crate) struct PresenceHistoryEvent {
+    pub event_id: String,
+    pub peer_id: String,
+    pub peer_name: String,
+    pub connected: bool,
+    pub post_time: i64,
+}
+
 pub struct PeerManager {
     peers: Arc<RwLock<HashMap<String, Peer>>>, // key 是 UUID
+    history_sender: RwLock<Option<tokio::sync::mpsc::UnboundedSender<PresenceHistoryEvent>>>,
     #[cfg(windows)]
     persistence: RwLock<Option<Arc<crate::peer_persistence::PeerPersistence>>>,
 }
@@ -130,8 +140,30 @@ impl PeerManager {
     pub fn new() -> Self {
         Self {
             peers: Arc::new(RwLock::new(HashMap::new())),
+            history_sender: RwLock::new(None),
             #[cfg(windows)]
             persistence: RwLock::new(None),
+        }
+    }
+
+    pub(crate) fn attach_presence_history(
+        &self,
+        sender: tokio::sync::mpsc::UnboundedSender<PresenceHistoryEvent>,
+    ) {
+        *self.history_sender.write().unwrap() = Some(sender);
+    }
+
+    // Called under the peer write lock so rapid disconnect/reconnect events
+    // retain their order. Heartbeats and session resets never call this.
+    fn record_presence_transition(&self, peer: &Peer, connected: bool) {
+        if let Some(sender) = self.history_sender.read().unwrap().as_ref() {
+            let _ = sender.send(PresenceHistoryEvent {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                peer_id: peer.id.clone(),
+                peer_name: peer.name.clone(),
+                connected,
+                post_time: chrono::Utc::now().timestamp_millis(),
+            });
         }
     }
 
@@ -227,6 +259,7 @@ impl PeerManager {
 
             // 只在用户重新上线时打印日志
             if was_offline {
+                self.record_presence_transition(peer, true);
                 println!(
                     "[PeerManager] 用户重新上线: {} ({}) - 可用内存: {} MB",
                     peer.name, peer.id, available_memory_mb
@@ -251,6 +284,7 @@ impl PeerManager {
                 "[PeerManager] 添加新用户: {} ({}) - 可用内存: {} MB",
                 name, id, available_memory_mb
             );
+            self.record_presence_transition(&peer, true);
             peers.insert(id, peer);
             return Some(PeerConnectionTransition::New);
         }
@@ -279,6 +313,7 @@ impl PeerManager {
                     peer.name, peer.id
                 );
                 peer.is_offline = true;
+                self.record_presence_transition(peer, false);
             }
         }
     }
@@ -335,6 +370,7 @@ impl PeerManager {
                 now.saturating_sub(peer.last_seen)
             );
             peer.is_offline = true;
+            self.record_presence_transition(peer, false);
         }
     }
 
@@ -561,6 +597,38 @@ impl PeerPresence {
 #[cfg(test)]
 mod presence_tests {
     use super::*;
+
+    #[test]
+    fn presence_history_ignores_heartbeat_stale_probe_and_session_reset() {
+        let manager = stale_manager();
+        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+        manager.attach_presence_history(sender);
+        let candidate = manager.stale_candidates().pop().unwrap();
+        manager.observe_discovery("peer".into(), "安卓 B".into(), candidate.addr.clone(), 128);
+        manager.complete_presence_probe(&candidate, false);
+        assert!(events.try_recv().is_err());
+        manager.force_mark_offline("peer");
+        manager.force_mark_offline("peer");
+        let disconnected = events.try_recv().unwrap();
+        assert!(!disconnected.connected);
+        assert_eq!(disconnected.peer_name, "安卓 B");
+        assert!(events.try_recv().is_err());
+        manager.observe_discovery("peer".into(), "安卓 B".into(), candidate.addr, 128);
+        assert!(events.try_recv().unwrap().connected);
+        manager.begin_presence_session();
+        assert!(events.try_recv().is_err());
+        let candidate = manager.stale_candidates().pop();
+        assert!(candidate.is_none());
+
+        let manager = stale_manager();
+        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+        manager.attach_presence_history(sender);
+        let candidate = manager.stale_candidates().pop().unwrap();
+        manager.complete_presence_probe(&candidate, false);
+        assert!(!events.try_recv().unwrap().connected);
+        manager.complete_presence_probe(&candidate, false);
+        assert!(events.try_recv().is_err());
+    }
 
     fn stale_manager() -> PeerManager {
         let manager = PeerManager::new();

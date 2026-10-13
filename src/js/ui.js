@@ -3084,6 +3084,28 @@ function initSettings() {
   const isAndroid = !!window.__TAURI__ &&
     (navigator.userAgent.includes("Android") || document.body.classList.contains("android-app"));
   const isWindowsDesktop = !!window.__TAURI__ && !isAndroid && navigator.userAgent.includes("Windows");
+  const supportsLocalReminders = isAndroid || isWindowsDesktop;
+  if (isWindowsDesktop) {
+    for (const id of ["android-notification-options-panel", "android-custom-reminder-panel"]) {
+      const panel = document.getElementById(id);
+      panel.classList.remove("android-only");
+      panel.classList.add("desktop-reminder-panel");
+      panel.querySelectorAll(".android-only").forEach(node => node.classList.remove("android-only"));
+    }
+    const batteryLabel = document.querySelector("#battery-alert-setting strong");
+    batteryLabel.textContent = "电脑电量提醒";
+    document.getElementById("android-receive-toggle").closest(".setting-item").style.display = "none";
+    notificationOptionsPanel.querySelector(".settings-content").prepend(document.querySelector(".shared-reminder-settings"));
+    document.querySelector(".shared-reminder-settings").classList.remove("android-only");
+    const entry = document.createElement("button");
+    entry.type = "button"; entry.className = "ns-button desktop-local-reminder-entry";
+    entry.textContent = "本机通知提醒";
+    entry.addEventListener("click", () => openSettingsSubpage("#notification-options", notificationOptionsPanel));
+    document.querySelector("#settings-panel > .settings-content").append(entry);
+    window.addEventListener("popstate", () => {
+      notificationOptionsPanel.classList.toggle("is-open", location.hash === "#notification-options");
+    });
+  }
   let saving = false;
   let loading = false;
   let saveTimer = null;
@@ -3346,12 +3368,16 @@ function initSettings() {
           initialStartMinimized = startMinimizedToggle.checked;
         }
         if (window.__TAURI__) {
-          if (isAndroid) {
+          if (supportsLocalReminders) {
             const background = await window.__TAURI__.core.invoke("get_background_runtime_settings");
             backgroundKeepRunningToggle.checked = !!background.keep_running;
             backgroundStartOnBootToggle.checked = !!background.start_on_boot;
             backgroundExcludeRecentsToggle.checked = !!background.exclude_from_recents;
             batteryAlertToggle.checked = !!background.battery_alert_enabled;
+            if (isWindowsDesktop) {
+              batteryAlertToggle.disabled = background.battery_available === false;
+              if (batteryAlertToggle.disabled) batteryAlertToggle.checked = false;
+            }
             initialBatteryAlert = batteryAlertToggle.checked;
             batteryAlertIntervalInput.value = background.battery_alert_interval_seconds ? String(background.battery_alert_interval_seconds) : "";
             batteryAlertRepeatInput.value = String(background.battery_alert_repeat_count ?? 1);
@@ -3373,7 +3399,7 @@ function initSettings() {
               battery_alert_levels: batteryAlertLevels,
             });
             setBatteryAlertControlsEnabled();
-            showBatteryAlertValidation();
+            showBatteryAlertValidation(isWindowsDesktop && batteryAlertToggle.disabled ? "当前设备无可用电池" : "");
           }
           initialNotifications = await window.__TAURI__.core.invoke("get_notifications_enabled").catch(() => true);
           notificationToggle.checked = initialNotifications;
@@ -3383,7 +3409,7 @@ function initSettings() {
         await refreshBackgroundReceiveState();
         await window.NotificationUI?.refreshSettings?.();
       } catch (e) {
-        settingsErrorMsg.textContent = "加载设置失败: " + e.message;
+        settingsErrorMsg.textContent = "加载设置失败: " + String(e?.message || e);
       } finally {
         loading = false;
       }
@@ -3553,28 +3579,28 @@ function initSettings() {
       const autoDl = autoDownloadToggle.checked;
       const notificationsEnabled = notificationToggle.checked;
       const notificationSoundEnabled = notificationSoundToggle.checked;
-      const batteryAlertEnabled = isAndroid && batteryAlertToggle.checked;
-      const batteryAlertIntervalSeconds = isAndroid ? Number(batteryAlertIntervalInput.value) : 0;
-      const batteryAlertRepeatCount = isAndroid ? Number(batteryAlertRepeatInput.value) : 1;
-      if (isAndroid && (!Number.isInteger(batteryAlertIntervalSeconds) ||
+      const batteryAlertEnabled = supportsLocalReminders && batteryAlertToggle.checked;
+      const batteryAlertIntervalSeconds = supportsLocalReminders ? Number(batteryAlertIntervalInput.value) : 0;
+      const batteryAlertRepeatCount = supportsLocalReminders ? Number(batteryAlertRepeatInput.value) : 1;
+      if (supportsLocalReminders && (!Number.isInteger(batteryAlertIntervalSeconds) ||
           (batteryAlertRepeatCount !== 1 && (batteryAlertIntervalSeconds < 1 || batteryAlertIntervalSeconds > 3600)))) {
         batteryAlertIntervalInput.focus();
         reminderValidationFailure = true;
         throw new Error("多次提醒时，请设置 1～3600 秒的间隔");
       }
-      if (isAndroid && (!Number.isInteger(batteryAlertRepeatCount) || batteryAlertRepeatCount < 1 || batteryAlertRepeatCount > 20)) {
+      if (supportsLocalReminders && (!Number.isInteger(batteryAlertRepeatCount) || batteryAlertRepeatCount < 1 || batteryAlertRepeatCount > 20)) {
         batteryAlertRepeatInput.focus();
         reminderValidationFailure = true;
         throw new Error("提醒次数必须是 1～20 次的整数");
       }
-      if (isAndroid && (!batteryAlertLevels.length || batteryAlertLevels.length > 10)) {
+      if (supportsLocalReminders && (!batteryAlertLevels.length || batteryAlertLevels.length > 10)) {
         throw new Error("请设置 1～10 个提醒电量");
       }
       const closeToTray = isWindowsDesktop ? closeToTrayToggle.checked : undefined;
       const autostartEnabled = isWindowsDesktop ? autostartToggle.checked : false;
       const startMinimized = isWindowsDesktop ? startMinimizedToggle.checked : undefined;
       const nameChanged = isAndroid && deviceName !== initialName;
-      const backgroundSettings = isAndroid ? {
+      const backgroundSettings = supportsLocalReminders ? {
         keep_running: backgroundKeepRunningToggle.checked,
         start_on_boot: backgroundStartOnBootToggle.checked,
         exclude_from_recents: backgroundExcludeRecentsToggle.checked,
@@ -3633,7 +3659,7 @@ function initSettings() {
           didSave = true;
           initialAutostart = autostartEnabled;
         }
-        if (isAndroid && JSON.stringify(backgroundSettings) !== initialBackgroundSettings) {
+        if (supportsLocalReminders && JSON.stringify(backgroundSettings) !== initialBackgroundSettings) {
           await window.__TAURI__.core.invoke("set_background_runtime_settings", {
             settings: backgroundSettings,
           });
@@ -3678,7 +3704,7 @@ function initSettings() {
           autostartToggle.checked = initialAutostart;
           startMinimizedToggle.checked = initialStartMinimized;
         }
-        if (isAndroid && initialBackgroundSettings) {
+        if (supportsLocalReminders && initialBackgroundSettings) {
           const previous = JSON.parse(initialBackgroundSettings);
           backgroundKeepRunningToggle.checked = previous.keep_running;
           backgroundStartOnBootToggle.checked = previous.start_on_boot;
@@ -3690,7 +3716,7 @@ function initSettings() {
             updateReminderInterval();
           }
           setBatteryAlertControlsEnabled();
-          showAndroidDownloadTarget(initialDlPath);
+          if (isAndroid) showAndroidDownloadTarget(initialDlPath);
         }
       }
     } finally {

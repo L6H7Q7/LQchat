@@ -49,6 +49,11 @@ object NotificationSyncSettings {
     fun command(context: Context, input: String): String { return try {
         val request = JSONObject(input)
         when (request.optString("action")) {
+            "local_history" -> return JSONObject().put("notifications", LocalNotificationHistory.pending(context)).toString()
+            "ack_local_history" -> {
+                LocalNotificationHistory.acknowledge(context, request.getJSONObject("payload").getJSONArray("ids"))
+                return "{}"
+            }
             "test_icon" -> return JSONObject().put("test_icon", NotificationAppIcon.encode(context, context.packageName)).toString()
             "save" -> {
                 val s = request.getJSONObject("settings")

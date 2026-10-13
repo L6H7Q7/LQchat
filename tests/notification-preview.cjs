@@ -4,6 +4,14 @@ const http = require("http"),
   path = require("path");
 const root = path.resolve(__dirname, "../src");
 const fixtureIcon = fs.readFileSync(path.resolve(__dirname, "../src-tauri/icons/32x32.png")).toString("base64");
+const desktopCapability = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../src-tauri/capabilities/default.json'), 'utf8'));
+const permissionRoot = path.resolve(__dirname, '../src-tauri/permissions');
+const desktopReminderCommands = fs.readdirSync(permissionRoot).filter(name=>name.endsWith('.toml')).flatMap(name=>
+  fs.readFileSync(path.join(permissionRoot,name),'utf8').split('[[permission]]').flatMap(block=>{
+    const identifier=block.match(/^\s*identifier\s*=\s*"([^"]+)"/m)?.[1];
+    const commands=block.match(/commands\.allow\s*=\s*(\[[\s\S]*?\])/ )?.[1];
+    return identifier && commands && desktopCapability.permissions.includes(identifier)?JSON.parse(commands):[];
+  }));
 const fixture = `(() => {
   const android = new URLSearchParams(location.search).has('android-preview');
   const peers = [{id:'iqoo',name:'IQOO',addr:'192.168.5.10:8888',is_offline:false,notification_push_enabled:true,notification_push_target_device_ids:['preview-local']},{id:'redm',name:'REDM',addr:'192.168.5.11:8888',is_offline:false,notification_push_enabled:true,notification_push_target_device_ids:['other-device']},{id:'4060',name:'4060',addr:'192.168.5.4:8888',is_offline:true,notification_push_enabled:false,notification_push_target_device_ids:[]}];
@@ -14,19 +22,35 @@ const fixture = `(() => {
   let custom={reminders:[{id:'fixture-today',title:'今日收菜',content:'今日提醒',mode:'once',date:dateKey(today),time:'18:00',weekday:today.getDay(),monthday:today.getDate(),weekdays:[1],monthdays:[1],countdown:false,dayGap:1,dayTime:'09:00',near:false,nearStart:60,nearGap:10},{id:'fixture-tomorrow',title:'明日浇花',content:'明日提醒',mode:'once',date:dateKey(tomorrow),time:'19:00',weekday:tomorrow.getDay(),monthday:tomorrow.getDate(),weekdays:[1],monthdays:[1],countdown:false,dayGap:1,dayTime:'09:00',near:false,nearStart:60,nearGap:10}],globalSettings:{repeat:3,repeatGap:5}};
   custom.globalSettings={repeat:1,repeatGap:0};
   let background={keep_running:false,start_on_boot:false,exclude_from_recents:false,battery_alert_enabled:false,battery_alert_interval_seconds:0,battery_alert_repeat_count:1,battery_alert_levels:[50,100]};
-  window.__customReminderFixture={writes:0,fail:false,notificationWrites:[],failNotificationSettings:false,backgroundWrites:[],failBackground:false};
+  window.__customReminderFixture={writes:0,fail:false,notificationWrites:[],failNotificationSettings:false,backgroundWrites:[],failBackground:false,batteryAvailable:true};
   const listeners = new Map();
   const records = [{peer_id:'iqoo',peer_name:'IQOO',view_kind:'notification_receive',status:'success',notification:{msg_type:'notification',event_id:'preview-event',source_device_id:'iqoo',target_device_id:'preview-local',package:'example.messages',app_name:'短信',title:'快递到达提醒',text:'您的包裹已到达驿站。此内容是本地界面测试数据，不是真实系统通知。',notification_key:'preview-key',post_time:Date.now()}}];
   records[0].notification.app_icon='${fixtureIcon}';
   records.push({...records[0],notification:{...records[0].notification,event_id:'without-icon',notification_key:'without-icon',app_name:'无图标示例',title:'文字仍然可读',text:'应用图标不可用时显示应用名称首字。',app_icon:null}});
+  window.__notificationHistoryFixture={records,peers,queries:[],fail:false,delay:0,
+    emit:()=>{for(const fn of listeners.get('notification-records-changed')||[])fn({payload:null});}};
   window.__TAURI__={event:{listen:async(name,fn)=>{if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);return()=>{};}},core:{invoke:async(command,args={})=>{
+    if(!android && ['custom_reminder_settings','get_background_runtime_settings','set_background_runtime_settings','notification_record','notification_pending_activation'].includes(command)
+      && !${JSON.stringify(desktopReminderCommands)}.includes(command))throw Error(command+' 未获桌面命令权限');
     switch(command){
       case 'custom_reminder_settings':{
         if(args.request.action==='save'){if(window.__customReminderFixture.fail)throw Error('模拟保存失败');custom={...JSON.parse(JSON.stringify(args.request.settings)),globalSettings:custom.globalSettings};window.__customReminderFixture.writes++;}
-        const r=custom.reminders[0];return {...custom,exactAllowed:false,notificationAllowed:true,enabled:true,next:r?[{id:r.id,title:r.title,content:r.content,at:Date.now()+60000,kind:'event',index:1}]:[]};
+        const r=custom.reminders[0];return {...custom,platform:android?'android':'windows',exactAllowed:!android,notificationAllowed:true,enabled:true,next:r?[{id:r.id,title:r.title,content:r.content,at:Date.now()+60000,kind:'event',index:1}]:[]};
       }
       case 'notification_settings':if(args.settings){if(window.__customReminderFixture.failNotificationSettings)throw Error('模拟推送设置保存失败');settings=args.settings;window.__customReminderFixture.notificationWrites.push(JSON.parse(JSON.stringify(settings)));}return{settings,platform:android?'android':'windows',access:false,permission:'unknown'};
-      case 'notification_records':return records;
+      case 'notification_records':{
+        const query=args.query||{}, fixture=window.__notificationHistoryFixture;
+        fixture.queries.push({...query});
+        if(fixture.fail)throw Error('模拟记录读取失败');
+        const snapshot=records.map(r=>JSON.parse(JSON.stringify(r)));
+        if(fixture.delay)await new Promise(resolve=>setTimeout(resolve,fixture.delay));
+        const matches=snapshot.filter(r=>(!query.device_id||r.peer_id===query.device_id)&&
+          (!query.direction||r.view_kind===({send:'notification_push',receive:'notification_receive',local:'notification_local'}[query.direction])));
+        const page=query.page||1,size=query.page_size||100,offset=(page-1)*size;
+        const devices=[...new Map(snapshot.filter(r=>r.view_kind!=='notification_local').map(r=>[r.peer_id,{peer_id:r.peer_id,peer_name:r.peer_name}])).values()];
+        return {records:matches.slice(offset,offset+size),devices,page,page_size:size,has_more:matches.length>offset+size};
+      }
+      case 'notification_record':return records.find(r=>r.record_id===args.recordId)||null;
       case 'notification_action':
         if(args.action==='apps')return{apps:[{package:'example.messages',name:'短信',icon:'${fixtureIcon}'},{package:'example.chat',name:'聊天',icon:null}]};
         if(args.action==='replace_allowed'){settings={...settings,allowed_packages:[...(args.payload?.packages||[])]};return{settings,platform:android?'android':'windows',access:false,permission:'unknown'};}
@@ -39,7 +63,7 @@ const fixture = `(() => {
       case 'get_default_download_path':return 'D:/Downloads';case 'get_notifications_enabled':return true;
       case 'get_unread_count':return 0;case 'get_notification_permission_state':return 'granted';
       case 'get_background_receive_state':return{state:'RUNNING',last_error_message:null};
-      case 'get_background_runtime_settings':return {...background};
+      case 'get_background_runtime_settings':return {...background,...(!android?{battery_available:window.__customReminderFixture.batteryAvailable}: {})};
       case 'set_background_runtime_settings':{
         if(window.__customReminderFixture.failBackground)throw Error('模拟统一配置保存失败');
         background={...args.settings};custom.globalSettings={repeat:background.battery_alert_repeat_count,repeatGap:background.battery_alert_interval_seconds};
@@ -98,8 +122,8 @@ http
       res.end();
     }
   })
-  .listen(18764, "127.0.0.1", () =>
+  .listen(Number(process.env.LQ_NOTIFICATION_PREVIEW_PORT || 18764), "127.0.0.1", () =>
     console.log(
-      "Notification UI fixture: http://127.0.0.1:18764/?desktop-preview=1",
+      `Notification UI fixture: http://127.0.0.1:${process.env.LQ_NOTIFICATION_PREVIEW_PORT || 18764}/?desktop-preview=1`,
     ),
   );

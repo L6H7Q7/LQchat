@@ -287,17 +287,7 @@ fn main() {
             println!("[Main] 服务端口: {}", port);
 
             // 读取语言设置用于托盘菜单
-            let tray_lang = lanchat::config_file::get_lang_from_config()
-                .or_else(|| {
-                    std::env::var("LANG").ok().map(|l| {
-                        if l.starts_with("zh") {
-                            "zh".to_string()
-                        } else {
-                            "en".to_string()
-                        }
-                    })
-                })
-                .unwrap_or_else(|| "zh".to_string());
+            let tray_lang = lanchat::config_file::desktop_menu_language();
             let (show_text, notif_text, quit_text) = if tray_lang == "en" {
                 ("Show Window", "Enable Notifications", "Quit")
             } else {
@@ -406,6 +396,8 @@ fn main() {
 
             // 桌面应用生命周期持有同一 CoreRuntime；网络层不直接持有 AppHandle。
             let core = lanchat::core_runtime::CoreRuntime::global();
+            #[cfg(windows)]
+            tauri::async_runtime::spawn(lanchat::local_reminders::run(pool.clone()));
             core.prepare(pool.clone(), peer_manager.clone());
             tauri::async_runtime::block_on(async {
                 let event_bus = core.event_bus();

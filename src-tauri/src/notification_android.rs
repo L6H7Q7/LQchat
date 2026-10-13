@@ -62,6 +62,32 @@ pub extern "system" fn Java_com_lanchat_app_NotificationSyncNative_send(
     crate::notification_sync::dispatch(notification, settings);
 }
 #[no_mangle]
+pub extern "system" fn Java_com_lanchat_app_NotificationSyncNative_recordRoute(
+    mut env: JNIEnv,
+    _: JObject,
+    data: JString,
+) {
+    let Ok(data) = env.get_string(&data) else {
+        return;
+    };
+    let data: String = data.into();
+    if data.len() > 4096 {
+        return;
+    }
+    if let Ok(event) = serde_json::from_str(&data) {
+        crate::notification_sync::dispatch_route_history(event);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_lanchat_app_NotificationSyncNative_localHistoryChanged(
+    _: JNIEnv, _: JObject,
+) {
+    crate::core_runtime::CoreRuntime::global().event_bus()
+        .publish(crate::core_events::CoreEvent::NotificationRecordsChanged);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_lanchat_app_NotificationSyncNative_pending(
     mut env: JNIEnv,
     _: JObject,

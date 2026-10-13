@@ -13,6 +13,8 @@ import org.json.JSONObject
 @Keep
 object NotificationSyncNative {
     external fun send(data: String)
+    external fun recordRoute(data: String)
+    external fun localHistoryChanged()
     external fun pending(requestId: String): Boolean
     external fun complete(requestId: String, success: Boolean, changed: Boolean, reason: String)
 }

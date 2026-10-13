@@ -329,12 +329,19 @@ impl CoreRuntime {
         let peer_manager = prepared.peer_manager;
         crate::config_file::apply_presence_grace_secs_from_storage(&pool).await;
         peer_manager.begin_presence_session();
+        let (history_sender, history_events) = tokio::sync::mpsc::unbounded_channel();
+        peer_manager.attach_presence_history(history_sender);
         let pool_ownership = prepared.pool_ownership;
         let supervisor_pool = pool.clone();
         let supervisor_peer_manager = peer_manager.clone();
         let event_bus = self.event_bus.clone();
         let supervisor = tokio::spawn(async move {
             let mut tasks = JoinSet::<Result<(), String>>::new();
+            tasks.spawn(crate::notification_sync::run_presence_history(
+                supervisor_pool.clone(),
+                history_events,
+                supervisor_cancellation.child_token(),
+            ));
             #[cfg(windows)]
             if let Some(store) = supervisor_peer_manager.persistence() {
                 tasks.spawn(store.run(supervisor_cancellation.child_token()));

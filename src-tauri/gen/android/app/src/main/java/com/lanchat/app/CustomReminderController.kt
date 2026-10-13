@@ -191,6 +191,9 @@ object CustomReminderController {
             val bounded = delivered.sortedByDescending { it.substringBeforeLast(':').substringAfterLast(':').toLongOrNull() ?: 0L }.take(4000).toSet()
             check(store.edit().putStringSet("delivered", bounded).commit())
             if (store.getBoolean("enabled", true) && now - p.getLong("at") <= MAX_LATENESS) {
+                runCatching {
+                    LocalNotificationHistory.record(c, p.getString("title"), p.getString("content"), "lq-reminder-${p.getString("key")}")
+                }.onFailure { android.util.Log.e("CustomReminder", "保存本机通知记录失败", it) }
                 if (NotificationManagerCompat.from(c).areNotificationsEnabled()) {
                     runCatching { post(c, p) }.onFailure { android.util.Log.e("CustomReminder", "发送提醒失败", it) }
                 }

@@ -23,9 +23,16 @@ pub struct Query {
 #[derive(Clone, Debug, Serialize)]
 pub struct Page {
     pub records: Vec<Record>,
+    pub devices: Vec<HistoryDevice>,
     pub page: u32,
     pub page_size: u32,
     pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HistoryDevice {
+    pub peer_id: String,
+    pub peer_name: String,
 }
 
 pub async fn initialize(pool: &sqlx::Pool<Sqlite>) -> Result<(), sqlx::Error> {
@@ -211,20 +218,26 @@ fn content_hash(record: &Record, icon_ref: Option<&str>) -> String {
 
 pub async fn upsert(pool: &sqlx::Pool<Sqlite>, record: &Record) -> Result<String, String> {
     prune(pool).await?;
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = if record.direction == "local" {
+        record.notification.post_time
+    } else {
+        chrono::Utc::now().timestamp_millis()
+    };
     let id = uuid::Uuid::new_v4().to_string();
     let root = icon_root(pool).await;
     let icon_ref = root
         .as_deref()
         .and_then(|root| cache_icon_at(root, record.notification.app_icon.as_deref()));
     let hash = content_hash(record, icon_ref.as_deref());
-    let direction = if record.view_kind == "notification_push" {
+    let direction = if record.view_kind == "notification_local" {
+        "local"
+    } else if record.view_kind == "notification_push" {
         "send"
     } else {
         "receive"
     };
     // Receive history keeps every captured event; send history keeps tracking the OS notification.
-    let identity_key = if direction == "receive" {
+    let identity_key = if direction != "send" {
         &record.notification.event_id
     } else {
         &record.notification.notification_key
@@ -300,7 +313,9 @@ fn row_to_record(row: sqlx::sqlite::SqliteRow, icon_root: Option<&std::path::Pat
             source_device_id.clone()
         },
         peer_name: row.get("device_name"),
-        view_kind: if direction == "send" {
+        view_kind: if direction == "local" {
+            "notification_local".into()
+        } else if direction == "send" {
             "notification_push".into()
         } else {
             "notification_receive".into()
@@ -337,7 +352,7 @@ pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, Stri
     );
     if let Some(direction) = query
         .direction
-        .filter(|value| value == "send" || value == "receive")
+        .filter(|value| value == "send" || value == "receive" || value == "local")
     {
         builder.push(" AND direction=").push_bind(direction);
     }
@@ -368,6 +383,27 @@ pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, Stri
     let has_more = rows.len() > page_size as usize;
     rows.truncate(page_size as usize);
     let icon_root = icon_root(pool).await;
+    // Include both directions so old send-only devices remain reachable outside page one.
+    let devices = sqlx::query(
+        "SELECT peer_id,device_name FROM (
+            SELECT CASE WHEN direction='send' THEN target_device_id ELSE source_device_id END AS peer_id,
+                device_name,
+                ROW_NUMBER() OVER (
+                    PARTITION BY CASE WHEN direction='send' THEN target_device_id ELSE source_device_id END
+                    ORDER BY updated_at DESC,id DESC
+                ) AS position
+            FROM notification_history WHERE direction IN ('send','receive')
+         ) WHERE position=1",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .map(|row| HistoryDevice {
+        peer_id: row.get("peer_id"),
+        peer_name: row.get("device_name"),
+    })
+    .collect();
     Ok(Page {
         records: rows
             .into_iter()
@@ -376,6 +412,7 @@ pub async fn query(pool: &sqlx::Pool<Sqlite>, query: Query) -> Result<Page, Stri
         page,
         page_size,
         has_more,
+        devices,
     })
 }
 
@@ -441,6 +478,91 @@ mod tests {
         initialize(&pool).await.unwrap();
         pool
     }
+    #[tokio::test]
+    async fn peer_transitions_are_named_local_history_without_receive_sources() {
+        let pool = pool().await;
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO settings VALUES ('user_id','android-a'),('username','安卓 A')")
+            .execute(&pool).await.unwrap();
+        let manager = crate::peers::PeerManager::new();
+        let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+        manager.attach_presence_history(sender);
+        manager.observe_discovery("android-b".into(), "安卓 B".into(), "127.0.0.1:8888".into(), 128);
+        manager.observe_discovery("android-b".into(), "安卓 B".into(), "127.0.0.1:8888".into(), 128);
+        manager.force_mark_offline("android-b");
+        manager.force_mark_offline("android-b");
+        manager.observe_discovery("android-b".into(), "安卓 B".into(), "127.0.0.1:8888".into(), 128);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        crate::notification_sync::run_presence_history(pool.clone(), events, cancel).await.unwrap();
+        let page = query(&pool, Query {
+            direction: Some("local".into()), device_id: Some("android-a".into()), ..Default::default()
+        }).await.unwrap();
+        assert_eq!(page.records.len(), 3);
+        assert!(page.devices.is_empty());
+        assert_eq!(page.records.iter().filter(|r| r.notification.text == "安卓 B 已连接").count(), 2);
+        assert_eq!(page.records.iter().filter(|r| r.notification.text == "安卓 B 已断开").count(), 1);
+        for record in page.records {
+            assert_eq!(record.notification.source_device_id, "android-a");
+            assert_eq!(record.notification.target_device_id, "android-a");
+            assert_eq!(record.direction, "local");
+        }
+        let remote = query(&pool, Query {
+            direction: Some("receive".into()), device_id: Some("android-b".into()), ..Default::default()
+        }).await.unwrap();
+        assert!(remote.records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_history_is_separate_deduplicated_and_retained_from_trigger_time() {
+        let pool = pool().await;
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO settings VALUES ('user_id','phone'),('username','本机')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut message = record("phone", "本机提醒", "success").notification;
+        message.event_id = "local-1".into();
+        message.post_time = chrono::Utc::now().timestamp_millis();
+        let first = crate::notification_sync::record_local(&pool, message.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::notification_sync::record_local(&pool, message.clone())
+                .await
+                .unwrap(),
+            first
+        );
+        let page = query(
+            &pool,
+            Query {
+                direction: Some("local".into()),
+                device_id: Some("phone".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].view_kind, "notification_local");
+        assert!(page.devices.is_empty());
+        assert_eq!(
+            page.records[0].notification.source_device_id,
+            page.records[0].notification.target_device_id
+        );
+        message.event_id = "local-2".into();
+        message.post_time -= RETENTION_MILLIS + 1000;
+        crate::notification_sync::record_local(&pool, message)
+            .await
+            .unwrap();
+        let page = query(&pool, Query::default()).await.unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].record_id, first);
+    }
 
     fn record(target: &str, text: &str, status: &str) -> Record {
         Record {
@@ -479,6 +601,79 @@ mod tests {
         record.direction = "receive".into();
         record.notification.event_id = event_id.into();
         record
+    }
+
+    #[tokio::test]
+    async fn unified_devices_include_old_senders_and_merge_both_directions() {
+        let pool = pool().await;
+        let mut outgoing = record("old-target", "已发送的旧记录", "success");
+        outgoing.peer_name = "旧目标".into();
+        let old_id = upsert(&pool, &outgoing).await.unwrap();
+        sqlx::query("UPDATE notification_history SET updated_at=updated_at-10000 WHERE id=?")
+            .bind(old_id).execute(&pool).await.unwrap();
+        let mut incoming = received("from-target", "已接收", "success");
+        incoming.notification.source_device_id = "old-target".into();
+        incoming.notification.target_device_id = "phone".into();
+        incoming.peer_id = "old-target".into();
+        incoming.peer_name = "目标新名字".into();
+        upsert(&pool, &incoming).await.unwrap();
+        upsert(&pool, &record("send-only", "仅发送", "success")).await.unwrap();
+        let page = query(&pool, Query { page_size:Some(1), ..Default::default() }).await.unwrap();
+        assert!(page.has_more);
+        assert_eq!(page.devices.len(), 2);
+        assert!(page.devices.iter().any(|d| d.peer_id == "send-only"));
+        assert!(page.devices.iter().any(|d| d.peer_id == "old-target" && d.peer_name == "目标新名字"));
+        let page = query(&pool, Query { device_id:Some("old-target".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(page.records.len(), 2);
+        assert_eq!(page.records[0].direction, "receive");
+        assert_eq!(page.records[1].direction, "send");
+        assert!(page.records.iter().all(|r| r.peer_id == "old-target"));
+    }
+
+    #[tokio::test]
+    async fn sources_include_devices_outside_the_global_page_and_use_the_latest_name() {
+        let pool = pool().await;
+        let mut old = received("old-event", "50%", "success");
+        old.notification.source_device_id = "old-phone".into();
+        old.peer_id = "old-phone".into();
+        old.peer_name = "旧手机".into();
+        let old_id = upsert(&pool, &old).await.unwrap();
+        sqlx::query("UPDATE notification_history SET updated_at=updated_at-10000 WHERE id=?")
+            .bind(old_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut recent = received("recent-event", "新通知", "success");
+        recent.peer_name = "新名字".into();
+        upsert(&pool, &recent).await.unwrap();
+        let page = query(
+            &pool,
+            Query {
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(page.has_more);
+        assert_eq!(page.devices.len(), 2);
+        assert!(page
+            .devices
+            .iter()
+            .any(|d| d.peer_id == "old-phone" && d.peer_name == "旧手机"));
+        let page = query(
+            &pool,
+            Query {
+                direction: Some("receive".into()),
+                device_id: Some("old-phone".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].notification.text, "50%");
     }
 
     #[tokio::test]

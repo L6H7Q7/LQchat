@@ -105,6 +105,9 @@ pub mod network;
 #[cfg(target_os = "android")]
 pub mod notification_android;
 pub mod notification_history;
+pub mod reminder_schedule;
+#[cfg(all(windows, feature = "desktop"))]
+pub mod local_reminders;
 pub mod notification_icon;
 pub mod notification_sync;
 #[cfg(all(windows, feature = "desktop"))]

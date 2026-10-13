@@ -51,7 +51,7 @@
     el('next-time').textContent=next?`${dateKey(at)} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())} · ${kind[next.kind]||''}`:'';
     el('next-rule').textContent=next?`第 ${next.index}/${state.globalSettings.repeat} 次 · ${state.globalSettings.repeat===1?'间隔无':`间隔 ${state.globalSettings.repeatGap} 秒`}${state.next.length>1?` · 同时还有 ${state.next.length-1} 条`:''}`:'';
     el('alarm-settings').hidden=state.exactAllowed;
-    el('permission').textContent=state.scheduleError?`调度失败：${state.scheduleError}`:!state.notificationAllowed?'系统通知权限未开启，请在系统设置中允许 LQChat 通知。':!state.exactAllowed?'未允许精确提醒，系统可能延迟推送。':'精确提醒已允许；手机休眠或省电限制仍可能延迟连续提醒。';
+    el('permission').textContent=state.scheduleError?`调度失败：${state.scheduleError}`:!state.notificationAllowed?'系统通知权限未开启，请在系统设置中允许 LQChat 通知。':state.platform==='windows'?'LQChat 运行期间生效，最小化到托盘后继续提醒；完全退出或关机期间不触发。':!state.exactAllowed?'未允许精确提醒，系统可能延迟推送。':'精确提醒已允许；手机休眠或省电限制仍可能延迟连续提醒。';
     const today = new Date(), days=Array.from({length:7},(_,i)=>addDays(today,i));
     if (!days.some(d=>dateKey(d)===selectedDate)) selectedDate=dateKey(today);
     el('days').replaceChildren();
@@ -124,9 +124,10 @@
   }
   function init() {
     const android=navigator.userAgent.includes('Android')||new URLSearchParams(location.search).get('android-preview')==='1';
-    if(!android||!window.__TAURI__)return;
+    const windows=!android && (navigator.userAgent.includes('Windows')||new URLSearchParams(location.search).has('desktop-preview'));
+    if((!android&&!windows)||!window.__TAURI__)return;
     const host=document.querySelector('#android-notification-options-panel .settings-content');
-    const section=document.createElement('section');section.className='cr-card android-only';
+    const section=document.createElement('section');section.className=android?'cr-card android-only':'cr-card';
     section.innerHTML=`<div class="cr-header"><strong id="cr-count">自定义通知（0）</strong><button id="cr-add" type="button" class="cr-link">＋ 添加</button></div>
       <div class="cr-next" aria-live="polite"><span class="cr-hint">下一条待推送通知</span><div id="cr-next-time" class="cr-hint"></div><strong id="cr-next-title">正在读取…</strong><div id="cr-next-content"></div><div id="cr-next-rule" class="cr-hint"></div></div>
       <div id="cr-days" class="cr-days" aria-label="从今天起的七天"></div>

@@ -191,6 +191,10 @@ class BatteryAlertController(
     }
 
     private fun postReminder(threshold: Int, reminderIndex: Int) {
+        runCatching {
+            LocalNotificationHistory.record(appContext, "电量提醒", "$threshold%",
+                "lq-battery-$threshold-${prefs.getLong(STARTED_AT, 0L)}-$reminderIndex")
+        }.onFailure { android.util.Log.e("BatteryAlert", "保存本机电量记录失败", it) }
         cancelAlertNotifications()
         val title = LocalDeviceIdentity.batteryNotificationTitle(LocalDeviceIdentity.read(appContext))
         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)

@@ -63,7 +63,7 @@ struct DiscoveryPresence {
     target_device_ids: Vec<String>,
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 fn valid_device_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -101,7 +101,12 @@ async fn persist_discovery_presence(
 pub async fn discovery_presence(pool: &sqlx::Pool<sqlx::Sqlite>) -> (bool, bool, Vec<String>) {
     #[cfg(not(target_os = "android"))]
     {
-        return (false, receive_enabled(pool).await, Vec::new());
+        let settings = desktop_settings(pool).await;
+        return (
+            settings.push_enabled,
+            settings.receive_enabled,
+            settings.target_device_ids,
+        );
     }
 
     #[cfg(target_os = "android")]
@@ -115,7 +120,11 @@ pub async fn discovery_presence(pool: &sqlx::Pool<sqlx::Sqlite>) -> (bool, bool,
         let presence = value
             .and_then(|value| serde_json::from_str::<DiscoveryPresence>(&value).ok())
             .unwrap_or_default();
-        (presence.enabled, presence.receive_enabled, presence.target_device_ids)
+        (
+            presence.enabled,
+            presence.receive_enabled,
+            presence.target_device_ids,
+        )
     }
 }
 
@@ -233,7 +242,7 @@ fn reset_generation(generation: u64) {
         };
     }
 }
-async fn record(pool: &sqlx::Pool<sqlx::Sqlite>, mut entry: Record) -> Option<String> {
+pub(crate) async fn record(pool: &sqlx::Pool<sqlx::Sqlite>, mut entry: Record) -> Option<String> {
     match crate::notification_history::upsert(pool, &entry).await {
         Ok(id) => {
             entry.record_id = id.clone();
@@ -247,6 +256,247 @@ async fn record(pool: &sqlx::Pool<sqlx::Sqlite>, mut entry: Record) -> Option<St
             None
         }
     }
+}
+
+pub async fn record_local(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    notification: Notification,
+) -> Result<String, String> {
+    persist_local(pool, notification, true).await
+}
+
+pub(crate) async fn run_presence_history(
+    pool: sqlx::Pool<sqlx::Sqlite>,
+    mut events: tokio::sync::mpsc::UnboundedReceiver<crate::peers::PresenceHistoryEvent>,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<(), String> {
+    loop {
+        let event = tokio::select! {
+            _ = cancellation.cancelled() => {
+                // Finish queued transitions before the session closes its database.
+                events.close();
+                while let Some(event) = events.recv().await {
+                    save_presence_history(&pool, event).await;
+                }
+                return Ok(());
+            },
+            event = events.recv() => event,
+        };
+        let Some(event) = event else { return Ok(()) };
+        save_presence_history(&pool, event).await;
+    }
+}
+
+async fn save_presence_history(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    event: crate::peers::PresenceHistoryEvent,
+) {
+    let name = if event.peer_name.trim().is_empty() {
+        &event.peer_id
+    } else {
+        &event.peer_name
+    };
+    let state = if event.connected { "连接" } else { "断开" };
+    let notification = Notification {
+        msg_type: "notification".into(),
+        event_id: event.event_id,
+        source_device_id: String::new(),
+        target_device_id: String::new(),
+        package: "com.lanchat.app.connection".into(),
+        app_name: "LQChat".into(),
+        app_icon: None,
+        title: format!("设备{state}"),
+        text: format!("{} 已{state}", name.chars().take(256).collect::<String>()),
+        notification_key: format!("presence:{}", event.peer_id),
+        post_time: event.post_time,
+    };
+    // History only: no system toast and no outgoing notification dispatch.
+    if let Err(error) = record_local(pool, notification).await {
+        eprintln!("[PresenceHistory] write failed: {error}");
+    }
+}
+async fn persist_local(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    mut notification: Notification,
+    notify: bool,
+) -> Result<String, String> {
+    let local_id = crate::db::get_user_id(pool).await?;
+    let name = crate::db::get_username(pool).await?;
+    if notification.event_id.is_empty()
+        || notification.event_id.len() > 128
+        || notification.title.chars().count() > 256
+        || notification.text.chars().count() > 4096
+    {
+        return Err("invalid_local_notification".into());
+    }
+    notification.source_device_id = local_id.clone();
+    notification.target_device_id = local_id.clone();
+    let entry = Record {
+        record_id: String::new(),
+        peer_id: local_id,
+        peer_name: name,
+        view_kind: "notification_local".into(),
+        direction: "local".into(),
+        status: "success".into(),
+        failure_reason: None,
+        observed_at: 0,
+        created_at: 0,
+        updated_at: 0,
+        content_hash: String::new(),
+        notification,
+    };
+    if notify {
+        record(pool, entry)
+            .await
+            .ok_or_else(|| "local_history_write_failed".into())
+    } else {
+        crate::notification_history::upsert(pool, &entry).await
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+pub async fn desktop_settings(pool: &sqlx::Pool<sqlx::Sqlite>) -> Settings {
+    let stored = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key='notification_sync_desktop_v1'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let mut settings = stored
+        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        .unwrap_or_default();
+    settings.receive_enabled = receive_enabled(pool).await;
+    settings
+}
+
+#[cfg(target_os = "android")]
+async fn import_local_history(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<(), String> {
+    let mut changed = false;
+    loop {
+        let pending = crate::notification_android::settings(json!({"action":"local_history"}))?;
+        let mut acknowledged = Vec::new();
+        for value in pending["notifications"].as_array().into_iter().flatten() {
+            if let Ok(message) = serde_json::from_value::<Notification>(value.clone()) {
+                if message.post_time
+                    >= chrono::Utc::now().timestamp_millis()
+                        - crate::notification_history::RETENTION_MILLIS
+                {
+                    persist_local(pool, message.clone(), false).await?;
+                }
+                acknowledged.push(message.event_id);
+            }
+        }
+        if !acknowledged.is_empty() {
+            changed = true;
+            crate::notification_android::settings(
+                json!({"action":"ack_local_history","payload":{"ids":acknowledged}}),
+            )?;
+        }
+        if acknowledged.len() < 200 {
+            break;
+        }
+    }
+    if changed {
+        CoreRuntime::global()
+            .event_bus()
+            .publish(CoreEvent::NotificationRecordsChanged);
+    }
+    Ok(())
+}
+
+/// Local route observations belong to viewing history, never to the transport/resend path.
+#[derive(Clone, Debug, Deserialize)]
+#[cfg(any(target_os = "android", test))]
+pub struct RouteHistoryEvent {
+    pub peer_id: String,
+    pub peer_name: String,
+    pub event_id: String,
+    pub connected: bool,
+    pub post_time: i64,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn route_history_record(event: RouteHistoryEvent, local_id: &str) -> Result<Record, String> {
+    let notification = Notification {
+        msg_type: "notification".into(),
+        event_id: event.event_id.clone(),
+        source_device_id: event.peer_id.clone(),
+        target_device_id: local_id.into(),
+        package: "com.lanchat.app".into(),
+        app_name: "LQChat".into(),
+        app_icon: None,
+        title: if event.connected {
+            "设备连接"
+        } else {
+            "设备断开"
+        }
+        .into(),
+        text: if event.connected {
+            "已接入局域网"
+        } else {
+            "已从局域网断开"
+        }
+        .into(),
+        notification_key: format!("lq-route-{}", event.event_id),
+        post_time: event.post_time,
+    };
+    if !valid_device_id(&event.peer_id) || event.peer_name.chars().count() > 128 {
+        return Err("invalid_route_event".into());
+    }
+    notification.validate(local_id)?;
+    Ok(Record {
+        record_id: String::new(),
+        peer_id: event.peer_id,
+        peer_name: event.peer_name,
+        view_kind: "notification_receive".into(),
+        direction: "receive".into(),
+        status: "success".into(),
+        failure_reason: None,
+        observed_at: 0,
+        created_at: 0,
+        updated_at: 0,
+        content_hash: String::new(),
+        notification,
+    })
+}
+
+#[cfg(target_os = "android")]
+pub fn dispatch_route_history(event: RouteHistoryEvent) {
+    let Some((handle, cancel, _)) = CoreRuntime::global().notification_session() else {
+        return;
+    };
+    let Some((pool, peers)) = CoreRuntime::global().shared_resources() else {
+        return;
+    };
+    handle.spawn(async move {
+        let save = async {
+            let local_id = crate::db::get_user_id(&pool).await?;
+            // A send-only target must not become a receive-history source just
+            // because Android displayed its connection toast. All peers are
+            // independently recorded in local history by the presence worker.
+            if !peers.get_all_peers().iter().any(|peer|
+                peer.id == event.peer_id && receives_from_peer(&local_id, peer)
+            ) {
+                return Ok(String::new());
+            }
+            let entry = route_history_record(event, &local_id)?;
+            record(&pool, entry)
+                .await
+                .ok_or_else(|| "route_history_write_failed".to_string())
+        };
+        tokio::select! {
+            _ = cancel.cancelled() => {},
+            result = save => if let Err(error) = result {
+                eprintln!("[NotificationHistory] route event failed: {error}");
+            }
+        }
+    });
+}
+
+fn receives_from_peer(local_id: &str, peer: &crate::peers::Peer) -> bool {
+    peer.notification_push_enabled
+        && peer.notification_push_target_device_ids.iter().any(|id| id == local_id)
 }
 
 pub fn on_state_event(event: &CoreEvent) {
@@ -428,7 +678,10 @@ pub async fn send(mut message: Notification, settings: Settings) -> Result<(), S
             continue;
         }
         let peer = peers.get_all_peers().into_iter().find(|p| p.id == target);
-        if peer.as_ref().is_some_and(|peer| !peer.notification_receive_enabled) {
+        if peer
+            .as_ref()
+            .is_some_and(|peer| !peer.notification_receive_enabled)
+        {
             continue;
         }
         let mut entry = Record {
@@ -484,8 +737,7 @@ pub fn route_status_snapshot(local_id: &str, mut peers: Vec<crate::peers::Peer>)
     peers.sort_by(|left, right| left.id.cmp(&right.id));
     json!({
         "peers": peers.into_iter().map(|peer| {
-            let pushes_to_local = peer.notification_push_enabled &&
-                peer.notification_push_target_device_ids.iter().any(|id| id == local_id);
+            let pushes_to_local = receives_from_peer(local_id, &peer);
             json!({
                 "id": peer.id,
                 "name": peer.name,
@@ -518,7 +770,7 @@ pub async fn run_route_status_monitor(
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", windows))]
 pub fn dispatch(message: Notification, settings: Settings) {
     // Admission is immediate, so a burst cannot create an unbounded native task backlog.
     static INTAKE: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -561,12 +813,27 @@ pub async fn notification_settings(
         // UI configuration does not depend on the later Core start completing.
         let pool = &state.pool;
         if let Some(settings) = settings {
+            if settings.target_device_ids.len() > 32
+                || settings.target_device_ids.iter().any(|id| {
+                    id.is_empty()
+                        || id.len() > 128
+                        || !id
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"-_".contains(&c))
+                })
+            {
+                return Err("推送目标设备无效".into());
+            }
+            let mut tx = pool.begin().await.map_err(|_| "设置保存失败")?;
+            sqlx::query("INSERT OR REPLACE INTO settings (key,value) VALUES ('notification_sync_desktop_v1',?)")
+                .bind(serde_json::to_string(&settings).map_err(|_| "设置保存失败")?).execute(&mut *tx).await.map_err(|_| "设置保存失败")?;
             sqlx::query("INSERT OR REPLACE INTO settings (key,value) VALUES ('notification_sync_receive',?)")
-                .bind(if settings.receive_enabled {"true"} else {"false"}).execute(pool).await.map_err(|_| "设置保存失败")?;
+                .bind(if settings.receive_enabled {"true"} else {"false"}).execute(&mut *tx).await.map_err(|_| "设置保存失败")?;
+            tx.commit().await.map_err(|_| "设置保存失败")?;
         }
-        let enabled = receive_enabled(pool).await;
+        let settings = desktop_settings(pool).await;
         Ok(
-            json!({"settings":Settings { receive_enabled:enabled,..Settings::default() },"platform":if cfg!(windows) {"windows"} else {"unsupported"},"permission":"unknown"}),
+            json!({"settings":settings,"platform":if cfg!(windows) {"windows"} else {"unsupported"},"permission":"unknown"}),
         )
     }
 }
@@ -589,6 +856,8 @@ pub async fn notification_records(
     query: Option<crate::notification_history::Query>,
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<crate::notification_history::Page, String> {
+    #[cfg(target_os = "android")]
+    import_local_history(&state.pool).await?;
     crate::notification_history::query(&state.pool, query.unwrap_or_default()).await
 }
 
@@ -634,6 +903,33 @@ pub fn notification_action(action: String, payload: Option<Value>) -> Result<Val
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn notification_test() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let (pool, _) = CoreRuntime::global()
+            .shared_resources()
+            .ok_or("会话未运行")?;
+        let settings = desktop_settings(&pool).await;
+        if settings.target_device_ids.is_empty() {
+            return Err("请先选择目标设备".into());
+        }
+        return send(
+            Notification {
+                msg_type: "notification".into(),
+                event_id: uuid::Uuid::new_v4().to_string(),
+                source_device_id: String::new(),
+                target_device_id: String::new(),
+                package: "lanchat.test".into(),
+                app_name: "LQChat 测试".into(),
+                app_icon: None,
+                title: "通知推送测试".into(),
+                text: format!("测试时间：{}", chrono::Local::now().format("%H:%M:%S")),
+                notification_key: "manual-test".into(),
+                post_time: chrono::Utc::now().timestamp_millis(),
+            },
+            settings,
+        )
+        .await;
+    }
     #[cfg(target_os = "android")]
     {
         let value = crate::notification_android::settings(json!({"action":"get"}))?;
@@ -658,13 +954,99 @@ pub async fn notification_test() -> Result<(), String> {
         };
         return send(message, settings).await;
     }
-    #[cfg(not(target_os = "android"))]
-    Err("Windows 首版仅接收通知".into())
+    #[cfg(not(any(target_os = "android", windows)))]
+    Err("当前平台不支持通知推送".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn route_history_keeps_transitions_and_battery_under_the_same_device() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::notification_history::initialize(&pool)
+            .await
+            .unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        for (event_id, connected) in [
+            ("connect-1", true),
+            ("disconnect-1", false),
+            ("connect-2", true),
+        ] {
+            let entry = route_history_record(
+                RouteHistoryEvent {
+                    peer_id: "phone".into(),
+                    peer_name: "IQOO".into(),
+                    event_id: event_id.into(),
+                    connected,
+                    post_time: now,
+                },
+                "pc",
+            )
+            .unwrap();
+            assert!(!entry.notification.title.contains("IQOO"));
+            assert!(!entry.notification.text.contains("IQOO"));
+            // A retry updates the same observation, while each transition stays separate.
+            let id = record(&pool, entry.clone()).await.unwrap();
+            assert_eq!(record(&pool, entry).await.unwrap(), id);
+        }
+        let mut battery = route_history_record(
+            RouteHistoryEvent {
+                peer_id: "phone".into(),
+                peer_name: "IQOO".into(),
+                event_id: "battery-1".into(),
+                connected: true,
+                post_time: now,
+            },
+            "pc",
+        )
+        .unwrap();
+        battery.notification.title = "电量提醒".into();
+        battery.notification.text = "50%".into();
+        battery.notification.notification_key = "lq-battery-50-1-0".into();
+        record(&pool, battery).await.unwrap();
+        let page = crate::notification_history::query(
+            &pool,
+            crate::notification_history::Query {
+                device_id: Some("phone".into()),
+                direction: Some("receive".into()),
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(page.has_more);
+        assert_eq!(page.devices.len(), 1);
+        assert_eq!(page.devices[0].peer_name, "IQOO");
+        let page = crate::notification_history::query(&pool, Default::default())
+            .await
+            .unwrap();
+        assert_eq!(page.records.len(), 4);
+        assert!(page.records.iter().all(|r| r.peer_id == "phone"));
+        assert!(page
+            .records
+            .iter()
+            .any(|r| r.notification.title == "设备断开"));
+        assert!(page.records.iter().any(|r| r.notification.text == "50%"));
+        assert!(route_history_record(
+            RouteHistoryEvent {
+                peer_id: "pc".into(),
+                peer_name: "本机".into(),
+                event_id: "self".into(),
+                connected: true,
+                post_time: now,
+            },
+            "pc"
+        )
+        .is_err());
+        pool.close().await;
+    }
     #[cfg(not(target_os = "android"))]
     #[tokio::test]
     async fn discovery_presence_advertises_windows_receive_setting() {
@@ -674,11 +1056,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(discovery_presence(&pool).await, (false, false, Vec::new()));
-        sqlx::query("INSERT INTO settings (key, value) VALUES ('notification_sync_receive', 'true')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES ('notification_sync_receive', 'true')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(discovery_presence(&pool).await, (false, true, Vec::new()));
+        let settings = Settings { push_enabled:true,receive_enabled:true,
+            target_device_ids:vec!["phone".into()],lq_battery_push_enabled:true,lq_reminder_push_enabled:true,..Default::default() };
+        sqlx::query("INSERT INTO settings (key,value) VALUES ('notification_sync_desktop_v1',?)")
+            .bind(serde_json::to_string(&settings).unwrap()).execute(&pool).await.unwrap();
+        assert_eq!(discovery_presence(&pool).await, (true,true,vec!["phone".into()]));
+        let restored=desktop_settings(&pool).await;
+        assert!(restored.lq_battery_push_enabled && restored.lq_reminder_push_enabled);
     }
     pub fn sample() -> Notification {
         Notification {
@@ -734,6 +1125,20 @@ mod tests {
         let n: Notification = serde_json::from_value(value).unwrap();
         assert!(n.app_icon.is_none());
         assert!(n.validate("pc").is_ok());
+    }
+
+    #[test]
+    fn send_only_target_is_not_a_receive_history_source() {
+        let manager = crate::peers::PeerManager::new();
+        manager.observe_discovery("android-b".into(), "安卓 B".into(), "127.0.0.1:8888".into(), 128);
+        manager.update_notification_presence("android-b", false, true, Vec::new());
+        assert!(!receives_from_peer("android-a", &manager.get_all_peers()[0]));
+        manager.update_notification_presence("android-b", true, true, vec!["other-device".into()]);
+        assert!(!receives_from_peer("android-a", &manager.get_all_peers()[0]));
+        manager.update_notification_presence("android-b", true, true, vec!["android-a".into()]);
+        assert!(receives_from_peer("android-a", &manager.get_all_peers()[0]));
+        manager.force_mark_offline("android-b");
+        assert!(receives_from_peer("android-a", &manager.get_all_peers()[0]));
     }
 
     #[test]

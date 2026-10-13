@@ -64,7 +64,8 @@ fn activate_window(payload: Option<serde_json::Value>) {
     let ui_handle = handle.clone();
     if let Err(error) = handle.run_on_main_thread(move || {
         if let Some(window) = ui_handle.get_webview_window("main") {
-            let result = window.show()
+            let result = window
+                .show()
                 .and_then(|_| window.unminimize())
                 .and_then(|_| window.set_focus());
             if let Err(error) = result {
@@ -99,17 +100,23 @@ pub fn show_message(title: &str, body: &str, use_system_sound: bool) -> Result<(
     static TOASTS: OnceLock<Mutex<VecDeque<ToastNotification>>> = OnceLock::new();
     let result = (|| -> windows::core::Result<()> {
         let doc = XmlDocument::new()?;
-        doc.LoadXml(&HSTRING::from(message_toast_xml(title, body, use_system_sound)))?;
+        doc.LoadXml(&HSTRING::from(message_toast_xml(
+            title,
+            body,
+            use_system_sound,
+        )))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
         toast.Activated(&TypedEventHandler::new(|_, _| {
             activate_window(None);
             Ok(())
         }))?;
-        let notifier = ToastNotificationManager::CreateToastNotifierWithId(
-            &HSTRING::from("com.lanchat.app"),
-        )?;
+        let notifier =
+            ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from("com.lanchat.app"))?;
         notifier.Show(&toast)?;
-        let mut toasts = TOASTS.get_or_init(|| Mutex::new(VecDeque::new())).lock().unwrap();
+        let mut toasts = TOASTS
+            .get_or_init(|| Mutex::new(VecDeque::new()))
+            .lock()
+            .unwrap();
         toasts.push_back(toast);
         while toasts.len() > 512 {
             toasts.pop_front();
@@ -182,7 +189,9 @@ fn publish(
     image: Option<&Path>,
 ) -> Result<bool, String> {
     let status = crate::core_runtime::CoreRuntime::global().status();
-    if status.state != crate::core_events::CoreState::Running {
+    let local = !message.source_device_id.is_empty()
+        && message.source_device_id == message.target_device_id;
+    if !local && status.state != crate::core_events::CoreState::Running {
         return Err("stopped".into());
     }
     static IDENTITY: OnceLock<Result<(), String>> = OnceLock::new();
@@ -225,7 +234,11 @@ fn publish(
     };
     let result = (|| -> windows::core::Result<ToastNotification> {
         let doc = XmlDocument::new()?;
-        doc.LoadXml(&HSTRING::from(toast_xml(message, source, image, record_id)))?;
+        let mut xml = toast_xml(message, source, image, record_id);
+        if local {
+            xml = xml.replace("</toast>", "<audio silent=\"true\"/></toast>");
+        }
+        doc.LoadXml(&HSTRING::from(xml))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
         let activation_record = record_id.to_string();
         let activation_source = message.source_device_id.clone();
@@ -253,6 +266,23 @@ fn publish(
         state.entries.pop_front();
     }
     Ok(true)
+}
+pub fn permission_enabled() -> bool {
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from("com.lanchat.app"))
+        .and_then(|notifier| notifier.Setting())
+        .is_ok_and(|setting| setting == NotificationSetting::Enabled)
+}
+pub fn publish_local(
+    message: &Notification,
+    source: &str,
+    record_id: &str,
+    sound: bool,
+) -> Result<bool, String> {
+    let changed = publish(message, source, record_id, None)?;
+    if changed && sound {
+        let _ = crate::commands::play_windows_notification_sound();
+    }
+    Ok(changed)
 }
 pub async fn receive(payload: &serde_json::Value, pool: &sqlx::Pool<sqlx::Sqlite>) {
     let id = payload["request_id"].as_str().unwrap_or("");
