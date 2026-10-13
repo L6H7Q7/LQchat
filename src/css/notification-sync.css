@@ -298,7 +298,8 @@ body:is(.android-app, .windows-app) .ns-wheel-header h3 { margin: 0; font-size: 
 body:is(.android-app, .windows-app) .ns-wheel-close { width: 44px; height: 44px; border: 0; border-radius: 12px; background: var(--android-bg); color: var(--android-muted); font: inherit; font-size: 24px; }
 body:is(.android-app, .windows-app) .ns-wheel { position: relative; width: 100%; aspect-ratio: 1; margin: 8px 0; border-radius: 50%; background: var(--android-bg); }
 body:is(.android-app, .windows-app) .ns-wheel::before { content: ""; position: absolute; inset: 24%; border: 1px solid var(--android-line); border-radius: 50%; pointer-events: none; }
-body:is(.android-app, .windows-app) .ns-wheel-day, body:is(.android-app, .windows-app) .ns-wheel-today {
+/* Keep radial positioning stronger than the desktop-wide button:hover transform reset. */
+body:is(.android-app, .windows-app) .ns-wheel :is(.ns-wheel-day, .ns-wheel-today) {
   position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 3px; padding: 4px; border: 0; color: var(--android-ink); background: transparent;
   font: inherit; cursor: pointer; touch-action: manipulation; transform: translate(-50%, -50%);

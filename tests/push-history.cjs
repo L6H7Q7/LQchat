@@ -166,6 +166,20 @@ async function main() {
               [...d.querySelectorAll('.ns-wheel button')].every(b=>{const q=b.getBoundingClientRect();
                 return q.left>=r.left&&q.right<=r.right&&getComputedStyle(b).animationName==='none';});})()`),true);
         }
+        // Desktop-wide hover styling must not remove the wheel's centering transform.
+        await send('Page.bringToFront');
+        const positions=await run(`[...document.querySelectorAll('.ns-wheel button')].map(b=>{
+          const r=b.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})`);
+        for (let i=0;i<7;i++) {
+          const r=positions[i];
+          await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x+r.width/2,y:r.y+r.height/2});
+          await sleep(50);
+          const after=await run(`[...document.querySelectorAll('.ns-wheel button')].map(b=>{
+            const r=b.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})`);
+          assert.equal(await run(`document.querySelectorAll('.ns-wheel button')[${i}].matches(':hover')`),true);
+          for(let j=0;j<7;j++) for(const key of ['x','y','width','height'])
+            assert(Math.abs(after[j][key]-positions[j][key])<0.5,`${platform}: wheel item ${j} ${key} shifted while hovering ${i}`);
+        }
         // Escape cancels without changing either boundary, and returns focus to the trigger.
         await send('Page.bringToFront');
         await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
