@@ -983,7 +983,10 @@ window.NotificationUI = (() => {
       await window.AndroidAppLoading.show("push-apps");
       const result = await invoke("notification_action", { action: "apps" });
       appOptions = result.apps || [];
-      appSelection = new Set(config.allowed_packages);
+      // Old preferences can retain packages that were removed or disabled since the last save.
+      // Keep all selectable categories here; the visible category/search is only a display filter.
+      const selectablePackages = new Set(appOptions.map((app) => app.package));
+      appSelection = new Set(config.allowed_packages.filter((pkg) => selectablePackages.has(pkg)));
       appLoading = false;
       renderAppPicker();
     } catch (e) {

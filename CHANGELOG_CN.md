@@ -4,6 +4,9 @@
 
 ## 2026-10-17 — 20.0（Android versionCode 2000）
 
+- 同版本追加修复：选择推送应用时，旧配置残留的已卸载、停用或不可选择应用不再阻止其他应用的取消选择与保存；按当前完整可选列表恢复选择，分类和搜索不会丢失其他应用的选择。
+- 保存时可清理历史失效项，仍拒绝新提交的无效包名；保存失败保留原设置和当前草稿，支持重试。
+- 本次追加修复验证：4 项原生校验测试、5 个隔离浏览器场景及 Android 设置代码编译通过；实机只读确认旧配置中的失效包名曾阻止取消 Edge 后保存。
 - 同版本修复重新打包：Android 从桌面长按应用并分享给 LQChat 时，解析 APK 内的应用名称，以“应用名称.apk”发送，避免统一显示为 base.apk；解析失败保留原文件名。
 - APK 名称解析在后台进行，必要的私有缓存用后清理；发送描述符在解析后重新打开，过期分享任务释放描述符。
 - 本次修复验证：4 项 APK 文件名测试通过，双端 release 构建、APK 签名与 ZIP 对齐校验通过；用户实测桌面长按分享路径通过。
@@ -19,8 +22,8 @@
 - Android 正式 APK：`LQChat-v20.0-android-arm64.apk`，包名 `com.lanchat.app`，版本 20.0（versionCode 2000），arm64-v8a，非 debuggable。
 - Windows 便携包：`LQChat-v20.0-windows-x64-portable.zip`，产品版本与文件版本均为 20.0.0。
 - APK v2/v3 签名验证通过，签名证书与既有正式版一致（SHA-256 `0f004d6b1c544587d8a8672defb22035a2a405905514e022be1cfad49574821d`）；ZIP 对齐验证通过。
-- APK SHA-256：`1B156F0DF0F2FB6049775EAFB67BD176C734F4599A3AF802E5AC0FBD970B5B1E`
-- Windows 包 SHA-256：`F341D27D6076AB4420B1A34379E1D3F34C8B9745586960A495EA65B23AEC6E82`
+- APK SHA-256：`29BC0C1D322378FE81CEDFDEE64B0BD851BB4AF741F2C5795F97CF7E19766698`
+- Windows 包 SHA-256：`9150E43B3CFB95B2B753D4336F1748320204F56055913006A40339708F5DFCC6`
 
 ## 2026-09-29 — 19.0（Android versionCode 1900）
 

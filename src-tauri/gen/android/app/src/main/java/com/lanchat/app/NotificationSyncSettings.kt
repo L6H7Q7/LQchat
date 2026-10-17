@@ -37,10 +37,10 @@ object NotificationSyncSettings {
     /** One editor commit replaces the complete snapshot. A failed commit restores the prior value. */
     @Synchronized private fun replaceAllowed(context: Context, requested: Set<String>) {
         val eligible = selectableApps(context).map { it.packageName }.toSet()
-        require(requested.all { it in eligible }) { "允许列表包含未安装或不可选择的应用" }
         val store = prefs(context)
         val previous = store.getStringSet("allowed_packages", emptySet())!!.toSet()
-        if (!store.edit().putStringSet("allowed_packages", requested).commit()) {
+        val next = NotificationAllowedPackages.reconcile(requested, previous, eligible)
+        if (!store.edit().putStringSet("allowed_packages", next).commit()) {
             store.edit().putStringSet("allowed_packages", previous).commit()
             error("允许列表保存失败，已保留旧值")
         }
