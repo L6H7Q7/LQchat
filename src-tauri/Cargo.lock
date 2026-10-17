@@ -2554,7 +2554,8 @@ dependencies = [
 ]
 
 [[package]]
-$120.0.0"
+name = "lanchat"
+version = "20.0.0"
 dependencies = [
  "axum",
  "base64 0.22.1",

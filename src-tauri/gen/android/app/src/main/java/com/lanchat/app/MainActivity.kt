@@ -61,6 +61,7 @@ class MainActivity : TauriActivity() {
     @Volatile private var shareNotificationDispatched = false
     private var webView: WebView? = null
     private var lastNotificationFromId: String? = null
+    private var shareCaptureGeneration = 0L
 
     // ─── SAF 文件选择器（持久化权限） ───
     private val safPickerLauncher = registerForActivityResult(
@@ -509,14 +510,28 @@ class MainActivity : TauriActivity() {
             Intent.ACTION_SEND -> listOfNotNull(sourceIntent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
             else -> sourceIntent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
         }
-        val files = uris.mapNotNull { readSharedFile(it, mimeType) }
-        if (files.isEmpty()) return false
-        synchronized(this) {
+        if (uris.isEmpty()) return false
+        val generation = synchronized(this) {
+            shareCaptureGeneration += 1
             releasePendingSharedFilesLocked()
-            pendingSharedFiles = files
-            shareNotificationDispatched = false
+            shareCaptureGeneration
         }
-        println("[MainActivity] 已接收 ${files.size} 个系统分享文件")
+        // APK label parsing and provider reads must not block Activity startup or the UI thread.
+        Thread({
+            val files = uris.mapNotNull { readSharedFile(it, mimeType) }
+            synchronized(this) {
+                if (generation != shareCaptureGeneration) {
+                    files.forEach { file ->
+                        if (file.fd >= 0) runCatching { android.os.ParcelFileDescriptor.adoptFd(file.fd).close() }
+                    }
+                    return@Thread
+                }
+                pendingSharedFiles = files
+                shareNotificationDispatched = false
+            }
+            println("[MainActivity] 已接收 ${files.size} 个系统分享文件")
+            runOnUiThread { notifyShareAvailable() }
+        }, "lqchat-shared-files").start()
         return true
     }
 
@@ -537,6 +552,8 @@ class MainActivity : TauriActivity() {
                 if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) fileSize = cursor.getLong(sizeIndex)
             }
         }
+        fileName = SharedApkNameResolver.resolve(this, uri, fileName, mimeType)
+        // Open the sending descriptor only after parsing, keeping its read position untouched.
         val descriptor = contentResolver.openFileDescriptor(uri, "r")
             ?: throw FileNotFoundException("无法打开分享文件")
         val fd = descriptor.detachFd()
@@ -568,7 +585,10 @@ class MainActivity : TauriActivity() {
 
     override fun onDestroy() {
         nativeSetUiVisibility(false)
-        synchronized(this) { releasePendingSharedFilesLocked() }
+        synchronized(this) {
+            shareCaptureGeneration += 1
+            releasePendingSharedFilesLocked()
+        }
         super.onDestroy()
     }
 
