@@ -1054,6 +1054,12 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>) {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
+                            let offer_caption = val
+                                .get("caption")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
 
                             let auto_dl = crate::db::get_auto_download(&state.pool).await;
                             if auto_dl {
@@ -1093,6 +1099,14 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>) {
                                 )
                                 .await
                                 {
+                                    if !offer_caption.is_empty() {
+                                        let _ = crate::db::set_message_caption(
+                                            &state.pool,
+                                            msg_id,
+                                            &offer_caption,
+                                        )
+                                        .await;
+                                    }
                                     let broadcast_msg = serde_json::json!({
                                         "id": msg_id,
                                         "from_id": from_id,
@@ -1102,6 +1116,7 @@ async fn handle_websocket(socket: WebSocket, state: Arc<AppState>) {
                                         "file_status": "offered",
                                         "file_size": file_size,
                                         "sender_msg_id": sender_msg_id,
+                                        "caption": offer_caption,
                                         "timestamp": timestamp,
                                     });
                                     let _ = state.ws_broadcast.send(broadcast_msg.to_string());
@@ -1500,6 +1515,30 @@ async fn save_message_to_db(
     .await
 }
 
+/// 把“图片+文字”的说明写入最近一条对应的接收记录（覆盖秒传、手动下载等所有分支）。
+async fn apply_caption_to_latest_file(
+    pool: &Pool<Sqlite>,
+    sender_id: &str,
+    sender_msg_id: &str,
+    caption: &str,
+) {
+    let text = caption.trim();
+    if text.is_empty() || sender_msg_id.is_empty() {
+        return;
+    }
+    let _ = sqlx::query(
+        "UPDATE messages SET caption = ? WHERE id = (
+            SELECT id FROM messages
+            WHERE sender_id = ? AND sender_msg_id = ? AND msg_type = 'file'
+            ORDER BY id DESC LIMIT 1)",
+    )
+    .bind(text)
+    .bind(sender_id)
+    .bind(sender_msg_id)
+    .execute(pool)
+    .await;
+}
+
 async fn notify_receive_failure(state: &AppState, sender_id: &str, sender_msg_id: &str) {
     if sender_msg_id.is_empty() { return; }
     let _ = crate::db::mark_received_file_failed(&state.pool, sender_id, sender_msg_id).await;
@@ -1599,6 +1638,8 @@ async fn upload_file_http(
     let mut streamed_chunk: Option<(std::path::PathBuf, u64, bool)> = None;
     let mut sender_msg_id = String::new();
     let mut speed_mb_s: f64 = 0.0;
+    // 图片/文件与文字合并发送时，发送端把文字放在每一个分块里。
+    let mut caption = String::new();
 
     // 获取下载目录
     let download_dir = get_download_dir(&state.pool).await;
@@ -1661,6 +1702,11 @@ async fn upload_file_http(
             "speed_mb_s" => {
                 if let Ok(text) = field.text().await {
                     speed_mb_s = text.parse().unwrap_or(0.0);
+                }
+            }
+            "caption" => {
+                if let Ok(text) = field.text().await {
+                    caption = text;
                 }
             }
             "chunk" => {
@@ -1938,6 +1984,7 @@ async fn upload_file_http(
                         "file_id": file_name,
                         "file_name": file_name,
                         "sender_msg_id": sender_msg_id,
+                        "caption": caption.trim(),
                         "timestamp": std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
                     });
@@ -1997,6 +2044,7 @@ async fn upload_file_http(
                                 "file_id": file_name,
                                 "file_name": file_name,
                                 "sender_msg_id": sender_msg_id,
+                                "caption": caption.trim(),
                                 "timestamp": std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
                             });
@@ -2016,6 +2064,7 @@ async fn upload_file_http(
                     }
                 }
 
+                apply_caption_to_latest_file(&state.pool, &sender_id, &sender_msg_id, &caption).await;
                 println!("[Web Server] ========== 秒传完成，通知发送端停止 ==========");
                 return Json(serde_json::json!({
                     "status": "already_exists",
@@ -2238,6 +2287,7 @@ async fn upload_file_http(
                 "file_size": file_size,
                 "file_name": final_file_name,
                 "sender_msg_id": sender_msg_id,
+                "caption": caption.trim(),
                 "timestamp": timestamp,
             });
             let _ = state.ws_broadcast.send(init_msg.to_string());
@@ -2306,6 +2356,18 @@ async fn upload_file_http(
                         )
                         .await
                         .unwrap_or(0);
+                        let caption_text = caption.trim().to_string();
+                        if !caption_text.is_empty() && msg_id > 0 {
+                            if let Err(error) = crate::db::set_message_caption(
+                                &state.pool,
+                                msg_id,
+                                &caption_text,
+                            )
+                            .await
+                            {
+                                eprintln!("[Web Server] 保存消息文字失败: {error}");
+                            }
+                        }
                         let sender_msg_id = crate::db::get_sender_msg_id_by_file(
                             &state.pool,
                             &sender_id,
@@ -2338,6 +2400,7 @@ async fn upload_file_http(
                             "file_id": file_id,
                             "file_name": final_file_name,
                             "sender_msg_id": sender_msg_id,
+                            "caption": caption_text,
                             "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
                         });
                         let _ = state.ws_broadcast.send(full_msg.to_string());
@@ -2697,7 +2760,13 @@ async fn resolve_received_file_destination(
 ) -> (String, String, Option<String>) {
     let staging_path_string = staging_path.to_string_lossy().into_owned();
     match export_to_configured_android_directory(pool, staging_path, file_name).await {
-        Ok(Some(exported_uri)) => (exported_uri, "accepted".to_string(), None),
+        Ok(Some(exported_uri)) => {
+            // 记录“这个文档是应用导出的”，作为后续清理/迁移的来源凭据（用户原始文档不在其中）。
+            if let Err(error) = crate::db::remember_exported_uri(pool, &exported_uri).await {
+                eprintln!("[Web Server] 记录导出文档来源失败: {error}");
+            }
+            (exported_uri, "accepted".to_string(), None)
+        }
         Ok(None) => (staging_path_string, "accepted".to_string(), None),
         Err(error) => {
             eprintln!(
@@ -3087,8 +3156,50 @@ async fn clear_chat_history_http(
         }
     };
 
+    let outcome =
+        match crate::storage_ops::cleanup_peer_chat_files(&state.pool, &my_id, &payload.peer_id).await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error }),
+                )
+                    .into_response()
+            }
+        };
+    if outcome.report.failed() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "success": false,
+                "aborted": true,
+                "deleted": outcome.report.deleted,
+                "missing": outcome.report.missing,
+                "kept": outcome.report.kept,
+                "released": outcome.report.released,
+                "failures": outcome.report.failures,
+            })),
+        )
+            .into_response();
+    }
     match crate::db::clear_chat_history(&state.pool, &my_id, &payload.peer_id).await {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response(),
+        Ok(_) => {
+            crate::storage_ops::finalize_cleanup(&state.pool, &outcome).await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "aborted": false,
+                    "deleted": outcome.report.deleted,
+                    "missing": outcome.report.missing,
+                    "kept": outcome.report.kept,
+                    "released": outcome.report.released,
+                    "failures": outcome.report.failures,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -3115,12 +3226,54 @@ async fn delete_user_http(
         }
     };
 
+    let outcome =
+        match crate::storage_ops::cleanup_peer_chat_files(&state.pool, &my_id, &payload.peer_id).await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error }),
+                )
+                    .into_response()
+            }
+        };
+    if outcome.report.failed() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "success": false,
+                "aborted": true,
+                "deleted": outcome.report.deleted,
+                "missing": outcome.report.missing,
+                "kept": outcome.report.kept,
+                "released": outcome.report.released,
+                "failures": outcome.report.failures,
+            })),
+        )
+            .into_response();
+    }
     match state
         .peer_manager
         .delete_user_and_history(&state.pool, &my_id, &payload.peer_id)
         .await
     {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response(),
+        Ok(_) => {
+            crate::storage_ops::finalize_cleanup(&state.pool, &outcome).await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "aborted": false,
+                    "deleted": outcome.report.deleted,
+                    "missing": outcome.report.missing,
+                    "kept": outcome.report.kept,
+                    "released": outcome.report.released,
+                    "failures": outcome.report.failures,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -3130,8 +3283,14 @@ async fn delete_user_http(
 }
 
 async fn clear_offline_peers_http(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.peer_manager.clear_offline_peer_profiles(&state.pool).await {
-        Ok(removed) => (StatusCode::OK, Json(serde_json::json!({ "removed": removed }))).into_response(),
+    let my_id = match crate::db::get_user_id(&state.pool).await {
+        Ok(value) => value,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response()
+        }
+    };
+    match state.peer_manager.clear_offline_with_history(&state.pool, &my_id).await {
+        Ok(value) => (StatusCode::OK, Json(value)).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error })).into_response(),
     }
 }

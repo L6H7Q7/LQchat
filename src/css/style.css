@@ -455,6 +455,12 @@ h2::before {
 	/* 状态文字稍微小一点更精致 */
 }
 
+/* 文件状态行在“等待/进行中/成功/失败”之间切换时必须保持同一占位，
+   因此不得使用 file-pending 的 8px 外边距。 */
+.message-content .file-transfer-status.file-pending {
+	margin-top: 6px;
+}
+
 /* --- 消息普通文本内容 --- */
 .message-text {
 	white-space: pre-wrap;
@@ -683,12 +689,19 @@ h2::before {
 .file-transfer-status.file-transfer-error { color: #ba3348; font-weight: 600; }
 .message.sent .file-transfer-status.file-transfer-error { color: #ffe1e5; }
 
+/* 进度条区域始终占满固定高度：等待/传输中/成功/失败/已清理切换时不再撑高或收缩卡片。 */
 .file-transfer-progress {
+	box-sizing: border-box;
 	width: 100%;
 	min-width: 0;
+	height: 25px;
+	min-height: 25px;
+	max-height: 25px;
 	margin-top: 5px;
+	overflow: hidden;
 }
-.file-transfer-progress[hidden] { display: none; }
+/* 未在传输时保留占位，只隐藏内容，避免卡片高度变化。 */
+.file-transfer-progress:not(.is-active) { visibility: hidden; }
 .file-transfer-bar {
 	height: 6px;
 	border-radius: 999px;
@@ -703,11 +716,16 @@ h2::before {
 	transition: width .16s ease;
 }
 .file-transfer-detail {
+	box-sizing: border-box;
 	margin-top: 5px;
+	height: 14px;
+	min-height: 14px;
+	max-height: 14px;
 	font-size: 11px;
-	line-height: 1.35;
-	white-space: normal;
-	overflow-wrap: anywhere;
+	line-height: 14px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	opacity: .82;
 }
 .message.sent .file-transfer-bar { background: rgba(255, 255, 255, .26); }
@@ -1410,6 +1428,59 @@ body.windows-app .ns-device-copy { flex: 1; }
 
 .refresh-countdown.is-editing .refresh-countdown-input {
 	display: inline-block;
+}
+
+/* 设置行、输入框、提示区在配置读取前后保持同一尺寸（第 10 项：加载前后布局稳定） */
+.setting-item {
+	min-height: 54px;
+}
+
+#port-input,
+#db-path-input,
+#download-path-input,
+#new-name-input {
+	height: 46px;
+	box-sizing: border-box;
+}
+
+/* 保存结果区固定占位，出现/消失不会改变设置面板尺寸 */
+.settings-auto-status {
+	min-height: 20px;
+}
+
+/* 首次读取配置期间：开关显示为中性占位，不显示任何“假默认值”，
+   并禁用过渡动画，避免出现“从未知滑到真实状态”的误导动画。 */
+body.settings-loading .toggle-switch {
+	pointer-events: none;
+	opacity: .55;
+}
+
+/* 分阶段恢复：先保留“仅禁过渡”的阶段类，让真实最终样式（checked 的 translateX）
+   直接落屏，再经过两个渲染机会后恢复用户交互动画，避免初始化时播放一次滑动。 */
+body.settings-loading .toggle-slider,
+body.settings-loading .toggle-slider::before,
+body.settings-no-anim .toggle-slider,
+body.settings-no-anim .toggle-slider::before {
+	transition: none !important;
+}
+
+body.settings-loading .toggle-slider {
+	background: rgba(100, 116, 139, 0.22) !important;
+}
+
+body.settings-loading .toggle-slider::before {
+	transform: none !important;
+}
+
+body.settings-loading #settings-panel input,
+body.settings-loading #settings-panel select,
+body.settings-loading #settings-panel textarea,
+body.settings-no-anim #settings-panel input,
+body.settings-no-anim #settings-panel select,
+body.settings-no-anim #settings-panel textarea,
+body.settings-no-anim .android-overlay-panel input,
+body.settings-no-anim .android-overlay-panel select {
+	transition: none !important;
 }
 
 /* 切换开关 (Toggle Switch) */
@@ -2473,17 +2544,45 @@ body.windows-app .ns-device-copy { flex: 1; }
 	gap: 8px;
 }
 
+/* 应用/APK 等文件卡片（非图片预览）上下高度固定：
+   等待、传输中、成功、失败、已清理等状态与进度条变化都不得改变卡片高度。 */
+.message-file:not(:has(.image-preview)) {
+	box-sizing: border-box;
+	height: 82px;
+	min-height: 82px;
+	max-height: 82px;
+	overflow: hidden;
+}
+
+/* 图片/文件与文字合并的消息：图片在上、空一行、文字在下（同一气泡）。 */
+.message-caption {
+	margin-top: 14px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: 15px;
+	line-height: 1.5;
+}
+
 /* 图片预览时的点击提示 */
 .message-file:hover .image-preview {
 	opacity: 0.9;
 	transition: opacity 0.2s;
 }
 
-/* 图片消息特殊样式：移除边框和背景 */
-.message-content:has(.image-preview) {
+/* 图片消息特殊样式：移除边框和背景；
+   但“图片+文字”合并消息必须保留气泡，否则文字会失去底色。 */
+.message-content:has(.image-preview):not(:has(.message-caption)) {
 	background: transparent !important;
 	padding: 0 !important;
 	border: none !important;
+}
+
+.message-content:has(.message-caption) {
+	padding-bottom: 10px;
+}
+
+.message-content:has(.message-caption) .image-preview {
+	border-radius: 10px;
 }
 
 .message-file:has(.image-preview) {
@@ -2821,6 +2920,45 @@ body.android-app .file-save-state.save-failed {
 	border-color: rgba(222, 145, 38, 0.4);
 	background: rgba(255, 247, 232, 0.98);
 	color: #9b5d0d;
+}
+
+/* 保存位置移到气泡外：气泡里只留卡片/图片与文字，位置信息用气泡下方的小字（绿色、直接显示路径）。 */
+body.android-app .file-save-state.file-save-outside {
+	box-sizing: border-box;
+	width: auto;
+	height: auto;
+	min-height: 0;
+	max-height: none;
+	max-width: min(310px, calc(100vw - 118px));
+	margin: 2px 0 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	color: var(--android-green);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 1.4;
+	display: -webkit-box;
+	overflow: hidden;
+	word-break: break-all;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+}
+
+body.android-app .message.sent .file-save-state.file-save-outside {
+	align-self: flex-end;
+	text-align: right;
+}
+
+body.android-app .file-save-state.file-save-outside.save-failed {
+	color: #9b5d0d;
+}
+
+body.android-app .file-save-state.file-save-outside.deleted,
+body.android-app .file-save-state.file-save-outside.inaccessible,
+body.android-app .file-save-state.file-save-outside.action-error {
+	color: #b03a4a;
 }
 
 body.android-app .file-save-state.deleted,
@@ -3350,3 +3488,313 @@ body.android-app #cancel-theme-btn {
 		border-radius: 0;
 	}
 }
+
+/* ==========================================================================
+   消息配色与卡片（统一主题变量）
+   发送方：白底 + 深色字；接收方：深底 + 浅色字。
+   页面背景仍保持现有浅灰紫体系，不随消息方向变化。
+   ========================================================================== */
+body.android-app {
+	--msg-sent-bg: #ffffff;
+	--msg-sent-ink: #23242e;
+	--msg-sent-muted: rgba(35, 36, 46, 0.56);
+	--msg-sent-border: rgba(28, 28, 52, 0.1);
+	--msg-sent-shadow: 0 1px 3px rgba(30, 30, 60, 0.08);
+	--msg-received-bg: #2b2f3f;
+	--msg-received-ink: #eef0f8;
+	--msg-received-muted: rgba(238, 240, 248, 0.62);
+	--msg-received-border: rgba(255, 255, 255, 0.1);
+	--msg-card-radius: 14px;
+	--msg-danger: #b03a4a;
+}
+
+body.android-app .message.sent .message-content {
+	background: var(--msg-sent-bg);
+	color: var(--msg-sent-ink);
+	border: 1px solid var(--msg-sent-border);
+	box-shadow: var(--msg-sent-shadow);
+}
+
+body.android-app .message.received .message-content {
+	background: var(--msg-received-bg);
+	color: var(--msg-received-ink);
+	border: 1px solid var(--msg-received-border);
+	box-shadow: none;
+}
+
+/* 气泡外时间在浅色页面上统一使用可读灰色（不沿用气泡内浅色文字）。 */
+body.android-app .message.sent .message-time,
+body.android-app .message.received .message-time {
+	color: var(--msg-meta-time, #676c7d);
+	opacity: 1;
+}
+
+/* 错误信息优先使用可读错误色（覆盖旧的成功/浅色文字规则）。 */
+body.android-app .message .message-meta .file-transfer-status:not(:empty),
+body.android-app .message .message-meta .file-transfer-status.file-transfer-error,
+body.android-app .message .message-meta .file-transfer-status.file-pending {
+	color: var(--msg-danger, #b03a4a);
+}
+
+/* ── 普通文件 / APK：单层紧凑卡片（不再套气泡内框） ── */
+body.android-app .message-file-only .message-content {
+	box-sizing: border-box;
+	max-width: calc(100vw - 96px);
+	padding: 0;
+	border: 0;
+	border-radius: var(--msg-card-radius);
+	background: transparent;
+	box-shadow: none;
+}
+
+body.android-app .message-file-only .message-file {
+	margin: 0;
+	border-radius: var(--msg-card-radius);
+}
+
+body.android-app .message.sent .message-file:not(:has(.image-preview)) {
+	background: var(--msg-sent-bg);
+	border: 1px solid var(--msg-sent-border);
+	box-shadow: var(--msg-sent-shadow);
+}
+
+body.android-app .message.received .message-file:not(:has(.image-preview)) {
+	background: var(--msg-received-bg);
+	border: 1px solid var(--msg-received-border);
+	box-shadow: none;
+}
+
+body.android-app .message.sent .file-name {
+	color: var(--msg-sent-ink);
+}
+
+body.android-app .message.sent .file-size {
+	color: var(--msg-sent-muted);
+}
+
+body.android-app .message.received .file-name {
+	color: var(--msg-received-ink);
+}
+
+body.android-app .message.received .file-size {
+	color: var(--msg-received-muted);
+}
+
+/* 进度条与失败提示在卡片之外：成功时不占位，卡片高度固定不变。 */
+body.android-app .message-file-only .file-transfer-status,
+body.android-app .message-image-msg .file-transfer-status {
+	margin-top: 6px;
+	font-size: 11px;
+	line-height: 1.3;
+	height: 18px;
+	min-height: 18px;
+	max-height: 18px;
+	display: flex;
+	align-items: center;
+	color: var(--msg-danger);
+}
+
+body.android-app .message-file-only .file-transfer-status:empty,
+body.android-app .message-image-msg .file-transfer-status:empty {
+	display: none;
+}
+
+body.android-app .message-file-only .file-transfer-progress,
+body.android-app .message-image-msg .file-transfer-progress {
+	width: min(260px, calc(100vw - 142px));
+	margin-top: 6px;
+}
+
+body.android-app .message-file-only .file-transfer-progress:not(.is-active),
+body.android-app .message-image-msg .file-transfer-progress:not(.is-active) {
+	display: none;
+}
+
+body.android-app .message-file-only .file-transfer-bar,
+body.android-app .message-image-msg .file-transfer-bar {
+	height: 3px;
+}
+
+body.android-app .message.sent .file-transfer-bar,
+body.android-app .message.received .file-transfer-bar {
+	background: rgba(143, 92, 229, 0.16);
+}
+
+body.android-app .message.sent .file-transfer-fill,
+body.android-app .message.received .file-transfer-fill {
+	background: #8f6ae0;
+}
+
+/* ── 图片消息：图片在上、一行间隔、文字在下，同一气泡 ── */
+body.android-app .message-image-msg .message-content:not(:has(.message-caption)) {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+body.android-app .message-image-msg .message-content:has(.message-caption) {
+	padding: 8px;
+	border-radius: var(--msg-card-radius);
+}
+
+body.android-app .message-image-msg .message-file {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+body.android-app .message-image-msg .image-preview {
+	width: auto;
+	height: auto;
+	max-width: min(300px, calc(100vw - 130px));
+	max-height: 340px;
+	aspect-ratio: auto;
+	margin: 0;
+	border-radius: 10px;
+	background: transparent;
+	overflow: hidden;
+}
+
+body.android-app .message-image-msg .image-preview img {
+	width: auto;
+	height: auto;
+	max-width: 100%;
+	max-height: 340px;
+	aspect-ratio: auto;
+	object-fit: contain;
+	background: transparent;
+	display: block;
+}
+
+body.android-app .message-image-msg .message-caption {
+	margin-top: 10px;
+}
+
+/* 分享按钮缩小、减弱阴影，避免抢视觉。 */
+body.android-app .file-share-btn {
+	width: 36px;
+	height: 36px;
+	border-radius: 11px;
+	border-color: rgba(255, 255, 255, 0.3);
+	box-shadow: 0 2px 6px rgba(128, 83, 218, 0.18);
+}
+
+body.android-app .file-share-btn:hover,
+body.android-app .file-share-btn:active {
+	box-shadow: 0 2px 8px rgba(128, 83, 218, 0.24);
+}
+
+
+/* 气泡外元信息行：左=保存目录（正常绿色 / 异常错误色），右=时间（固定不收缩）。
+   时间在浅色页面上统一使用可读灰色，不沿用气泡内浅色文字。 */
+body.android-app {
+	/* 纯文字消息的时间（无路径/错误元信息时沿用） */
+	--msg-meta-time: #676c7d;
+	/* 气泡外元信息行的统一绿色：正常状态左侧目录与右侧时间同色 */
+	--msg-meta-path: #17835c;
+}
+
+/* 安卓消息列撑满聊天宽度，元信息行才能左目录贴左、右时间贴右（与 Windows 一致）。 */
+body.android-app #chat-messages .message {
+	width: 100%;
+}
+
+body.android-app .message-meta {
+	box-sizing: border-box;
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 8px;
+	width: 100%;
+	max-width: calc(100vw - 96px);
+	margin-top: 4px;
+	overflow: hidden;
+}
+
+/* 保留：发送方泡泡本身右对齐，元信息行仍左目录右时间。 */
+
+body.android-app .message-meta {
+	/* 正常状态：左侧目录与右侧时间统一使用同一种清晰绿色。 */
+	color: var(--msg-meta-path);
+}
+
+body.android-app .message-meta .message-meta-time,
+body.android-app .message-meta .message-meta-time .message-time {
+	flex: 0 0 auto;
+	margin: 0;
+	white-space: nowrap;
+	text-align: right;
+	/* 跟随元信息行颜色：正常=绿色，出错=红色，与左侧完全一致。 */
+	color: inherit;
+	font-size: 11px;
+	line-height: 16px;
+	opacity: 1;
+}
+
+/* 出错状态：左侧错误信息与右侧时间统一使用同一种清晰红色。 */
+body.android-app .message-meta.meta-error,
+body.android-app .message-meta:has(.file-transfer-status:not(:empty)),
+body.android-app .message-meta:has(.file-save-state.deleted),
+body.android-app .message-meta:has(.file-save-state.inaccessible),
+body.android-app .message-meta:has(.file-save-state.action-error),
+body.android-app .message-meta:has(.file-save-state.save-failed) {
+	color: var(--msg-danger);
+}
+
+body.android-app .message-meta .file-transfer-status {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+	height: 16px;
+	min-height: 16px;
+	max-height: 16px;
+	display: flex;
+	align-items: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--msg-danger);
+}
+
+body.android-app .message-meta .file-transfer-status:empty {
+	display: none;
+}
+
+body.android-app .message-meta .file-save-state.file-save-outside {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: none;
+	margin: 0;
+	display: block;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	-webkit-line-clamp: unset;
+	-webkit-box-orient: initial;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--msg-meta-path);
+}
+
+body.android-app .message-meta .file-save-state.file-save-outside.deleted,
+body.android-app .message-meta .file-save-state.file-save-outside.inaccessible,
+body.android-app .message-meta .file-save-state.file-save-outside.action-error,
+body.android-app .message-meta .file-save-state.file-save-outside.save-failed {
+	color: var(--msg-danger);
+}
+
+/* 有错误信息时只显示错误，不再显示目录，避免重叠或绿色成功误导。 */
+body.android-app .message-meta.meta-error .file-save-state {
+	display: none;
+}
+
+body.android-app .message-meta.meta-error .file-transfer-status {
+	flex: 1 1 auto;
+}
+

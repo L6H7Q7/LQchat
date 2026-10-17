@@ -11,6 +11,7 @@
         <title>LQChat</title>
     </head>
     <body>
+        <script src="js/shell.js"></script>
         <div id="edit-name-panel" class="edit-panel" style="display: none;">
             <input type="text" id="new-name-input" data-i18n="name_placeholder" placeholder="输入新名字" maxlength="50">
             <div class="button-group">
@@ -74,11 +75,11 @@
                         </div>
                         <div id="desktop-auto-download-setting" class="setting-item android-permission-row">
                             <span class="android-permission-copy"><strong>自动下载</strong></span>
-                            <label class="toggle-switch"><input type="checkbox" id="auto-download-toggle" checked aria-label="自动下载"><span class="toggle-slider"></span></label>
+                            <label class="toggle-switch"><input type="checkbox" id="auto-download-toggle" aria-label="自动下载"><span class="toggle-slider"></span></label>
                         </div>
                         <div class="setting-item android-permission-row android-only">
-                            <button id="android-download-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开外部文件夹访问的下载设置"><strong>外部文件夹访问</strong></button>
-                            <label class="toggle-switch"><input type="checkbox" id="android-permission-file-toggle" aria-label="外部文件夹访问"><span class="toggle-slider"></span></label>
+                            <button id="android-download-options-btn" class="android-permission-copy android-permission-entry" type="button" aria-label="打开外部文件访问设置"><strong>外部文件访问</strong></button>
+                            <label class="toggle-switch"><input type="checkbox" id="android-permission-file-toggle" aria-label="外部文件访问"><span class="toggle-slider"></span></label>
                         </div>
                         <div class="setting-item android-only shared-reminder-settings">
 
@@ -98,7 +99,7 @@
                     <div class="setting-label-row">
                         <label for="close-to-tray-toggle" data-i18n="close_to_tray_label">点击 X 时最小化到托盘:</label>
                         <label class="toggle-switch">
-                            <input type="checkbox" id="close-to-tray-toggle" checked>
+                            <input type="checkbox" id="close-to-tray-toggle">
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
@@ -117,7 +118,7 @@
                     <div class="setting-label-row">
                         <label for="start-minimized-toggle" data-i18n="start_minimized_label">启动时自动缩小到托盘:</label>
                         <label class="toggle-switch">
-                            <input type="checkbox" id="start-minimized-toggle" checked>
+                            <input type="checkbox" id="start-minimized-toggle">
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
@@ -205,30 +206,6 @@
                 <button id="android-push-apps-save-btn" class="android-primary-action" type="button">保存选择</button>
             </div>
         </section>
-        <section id="android-device-settings-panel" class="android-overlay-panel android-only" aria-label="本机设备设置">
-            <header class="android-page-bar android-only">
-                <button id="android-device-settings-back-btn" class="android-back-btn" type="button" aria-label="返回主页面">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
-                </button>
-                <h3>本机设备</h3>
-                <span></span>
-            </header>
-            <div class="settings-content">
-                <section class="android-settings-card">
-                    <div class="setting-item android-inline-setting">
-                        <label for="settings-device-name-input">设备名称</label>
-                        <input type="text" id="settings-device-name-input" maxlength="50" autocomplete="off">
-                    </div>
-                    <button id="android-download-location-btn" class="android-inline-setting android-download-row" type="button" aria-label="选择下载位置">
-                        <span class="android-download-label">下载位置</span>
-                        <span class="android-download-value-group">
-                            <span id="android-download-value">应用专属存储（默认）</span>
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
-                        </span>
-                    </button>
-                </section>
-            </div>
-        </section>
         <section id="android-notification-options-panel" class="android-overlay-panel android-only" aria-label="通知提醒设置">
             <header class="android-page-bar android-only">
                 <button id="android-notification-options-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
@@ -300,12 +277,12 @@
                 <button id="cr-save" class="cr-save" type="submit">保存</button>
             </form>
         </section>
-        <section id="android-download-options-panel" class="android-overlay-panel android-only" aria-label="下载设置">
+        <section id="android-download-options-panel" class="android-overlay-panel android-only" aria-label="外部文件访问">
             <header class="android-page-bar android-only">
                 <button id="android-download-options-back-btn" class="android-back-btn" type="button" aria-label="返回设置">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
                 </button>
-                <h3>下载设置</h3>
+                <h3>外部文件访问</h3>
                 <span></span>
             </header>
             <div class="settings-content">
@@ -314,6 +291,21 @@
                         <span class="android-permission-copy"><strong>自动下载</strong></span>
                         <label class="toggle-switch"><input type="checkbox" id="android-auto-download-toggle" aria-label="自动下载"><span class="toggle-slider"></span></label>
                     </div>
+                    <button id="android-download-location-btn" class="android-inline-setting android-download-row" type="button" aria-label="选择下载位置">
+                        <span class="android-download-label">下载位置</span>
+                        <span class="android-download-value-group">
+                            <span id="android-download-value">读取中…</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                        </span>
+                    </button>
+                    <button id="android-migrate-files-btn" class="android-inline-setting android-migrate-row" type="button" aria-label="立刻迁移已保存文件到下载位置">
+                        <span class="android-download-label">立刻迁移</span>
+                        <span class="android-download-value-group">
+                            <span id="android-migrate-value">将已保存文件移动到下载位置</span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                        </span>
+                    </button>
+                    <div id="android-migrate-status" class="setting-hint android-migrate-status" role="status"></div>
                 </section>
             </div>
         </section>
@@ -426,7 +418,7 @@
                     </div>
                     <section id="android-home" class="android-home" aria-label="设备主页">
                         <header class="android-home-bar">
-                            <button id="android-local-device-btn" class="android-local-device" type="button" aria-label="打开本机设备设置">
+                            <button id="android-local-device-btn" class="android-local-device" type="button" aria-label="修改设备名称">
                                 <span class="android-online-dot" aria-hidden="true"></span>
                                 <span><strong id="android-device-name">正在加载...</strong><span aria-hidden="true"> · </span><span id="android-device-ip">检测中...</span></span>
                             </button>
@@ -437,7 +429,7 @@
 
                         <section class="android-home-card android-chat-card" aria-label="聊天设备">
                             <div class="android-list-toolbar">
-                                <span id="android-peer-summary" class="android-count-label">当前 0 台设备</span>
+                                <span id="android-peer-summary" class="android-count-label">正在读取设备…</span>
                                 <div class="android-list-actions">
                                     <div class="refresh-countdown" id="android-refresh-countdown">
                                         <button type="button" class="refresh-countdown-value" aria-label="局域网断开判定时长，点击修改" title="局域网断开判定时长，点击修改">20s</button>
@@ -455,7 +447,7 @@
 
                         <section class="android-home-card android-receive-card" aria-label="通知设备">
                             <div class="android-list-toolbar">
-                                <span id="android-receive-count" class="android-count-label">通知设备 0 台</span>
+                                <span id="android-receive-count" class="android-count-label">正在读取设备…</span>
                                 <div class="android-list-actions">
                                     <button id="android-refresh-receive-btn" class="android-icon-btn" type="button" aria-label="刷新通知设备">
                                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
@@ -482,6 +474,22 @@
                             </svg>
                         </button>
                         <h3 id="chat-with-name">用户名</h3>
+                        <button id="clear-chat-data-btn" type="button" title="清除聊天数据" aria-label="清除聊天数据">
+                            <svg viewBox="0 0 24 24"
+                                 width="20"
+                                 height="20"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                                 fill="none"
+                                 stroke-linecap="round"
+                                 stroke-linejoin="round">
+                                <path d="M3 6h18"></path>
+                                <path d="M8 6V4h8v2"></path>
+                                <path d="M6 6l1 14h10l1-14"></path>
+                                <line x1="10" y1="10" x2="10" y2="17"></line>
+                                <line x1="14" y1="10" x2="14" y2="17"></line>
+                            </svg>
+                        </button>
                         <button id="select-mode-btn" title="多选">
                             <svg viewBox="0 0 24 24"
                                  width="20"

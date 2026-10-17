@@ -61,6 +61,7 @@
     "allow-read-clipboard-files",
     "allow-delete-messages",
 		"allow-clear-chat-history",
+		"allow-migrate-saved-files",
 		"allow-delete-user-complete",
 		"allow-clear-offline-peers",
 		"allow-get-custom-peers",

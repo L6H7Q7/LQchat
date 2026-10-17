@@ -487,11 +487,8 @@ impl PeerManager {
         Ok(())
     }
 
-    /// 清除当前不在局域网的设备档案，不删除双方的聊天记录。
-    pub async fn clear_offline_peer_profiles(
-        self: &Arc<Self>,
-        pool: &sqlx::Pool<sqlx::Sqlite>,
-    ) -> Result<Vec<String>, String> {
+    /// 返回“当前离线且探测不可达”的设备 id：只做探测，不改动任何数据。
+    pub async fn offline_unreachable_peer_ids(&self) -> Result<Vec<String>, String> {
         use futures_util::{stream::FuturesUnordered, StreamExt};
 
         let candidates: Vec<Peer> = self.get_all_peers().into_iter()
@@ -506,11 +503,55 @@ impl PeerManager {
                 (peer.id, same_device_reachable)
             });
         }
-        let mut removed = Vec::new();
+        let mut ids = Vec::new();
         while let Some((peer_id, reachable)) = probes.next().await {
-            if reachable {
+            if !reachable {
+                ids.push(peer_id);
+            }
+        }
+        Ok(ids)
+    }
+
+    /// 清除离线设备：复用单设备删除的清理语义（先清本机管理的文件，再删记录与档案）。
+    /// 任一设备清理失败时保留该设备的记录与档案，并如实回报。
+    pub async fn clear_offline_with_history(
+        self: &Arc<Self>,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        my_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let targets = self.offline_unreachable_peer_ids().await?;
+        let mut cleared: Vec<String> = Vec::new();
+        let mut failures: Vec<serde_json::Value> = Vec::new();
+        for peer_id in targets {
+            let outcome = crate::storage_ops::cleanup_peer_chat_files(pool, my_id, &peer_id).await?;
+            if outcome.report.failed() {
+                failures.push(serde_json::json!({
+                    "peer_id": peer_id,
+                    "deleted": outcome.report.deleted,
+                    "kept": outcome.report.kept,
+                    "failures": outcome.report.failures,
+                }));
                 continue;
             }
+            self.delete_user_and_history(pool, my_id, &peer_id).await?;
+            crate::storage_ops::finalize_cleanup(pool, &outcome).await;
+            cleared.push(peer_id);
+        }
+        Ok(serde_json::json!({
+            "cleared": cleared,
+            "failures": failures,
+            "aborted": !failures.is_empty(),
+        }))
+    }
+
+    /// 清除当前不在局域网的设备档案，不删除双方的聊天记录。
+    pub async fn clear_offline_peer_profiles(
+        self: &Arc<Self>,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+    ) -> Result<Vec<String>, String> {
+        let candidates = self.offline_unreachable_peer_ids().await?;
+        let mut removed = Vec::new();
+        for peer_id in candidates {
             #[cfg(windows)]
             if let Some(store) = self.persistence() {
                 if store.delete_offline_profile(self.clone(), peer_id.clone()).await? {

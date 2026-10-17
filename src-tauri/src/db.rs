@@ -174,6 +174,13 @@ pub async fn update_download_path(
         .await
         .map_err(|e| e.to_string())?;
 
+    // 记录用过的系统目录，作为“这个文档由应用导出”的来源凭据。
+    if trimmed.starts_with("content://") {
+        if let Err(error) = remember_download_tree(pool, trimmed).await {
+            eprintln!("[DB] 记录下载目录历史失败: {error}");
+        }
+    }
+
     println!("[DB] download path updated successfully");
     Ok(())
 }
@@ -286,6 +293,19 @@ pub async fn init_db_with_path(app_dir: PathBuf) -> Result<Pool<Sqlite>, sqlx::E
     let _ = sqlx::query("ALTER TABLE messages ADD COLUMN sender_msg_id TEXT")
         .execute(&pool)
         .await;
+
+    // 图片/文件与文字合并为同一条消息时，文字保存在 caption 中，气泡内显示在图片下方。
+    let _ = sqlx::query("ALTER TABLE messages ADD COLUMN caption TEXT")
+        .execute(&pool)
+        .await;
+
+    // 发送成功后由应用清理掉的本机副本（outbox 等）。前端据此显示
+    // “发送成功，本机对应文件已删除”，而不是笼统的“文件已删除”。
+    let _ = sqlx::query(
+        "ALTER TABLE messages ADD COLUMN local_copy_cleaned INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await;
 
     // Chat retention uses the local insertion time instead of the sender supplied timestamp.
     // Older databases are backfilled once, while a trigger covers every existing INSERT path.
@@ -1095,9 +1115,9 @@ pub async fn get_chat_history_with_offset(
 
     // 【核心修复】：在两处 SELECT 中加上了 status 字段
     let messages = sqlx::query_as::<_, crate::models::Message>(
-        "SELECT id, sender_id, receiver_id, content, msg_type, timestamp, file_path, file_status, file_size, sender_msg_id, status 
+        "SELECT id, sender_id, receiver_id, content, msg_type, timestamp, file_path, file_status, file_size, sender_msg_id, status, caption, local_copy_cleaned 
          FROM (
-            SELECT id, sender_id, receiver_id, content, msg_type, timestamp, file_path, file_status, file_size, sender_msg_id, status 
+            SELECT id, sender_id, receiver_id, content, msg_type, timestamp, file_path, file_status, file_size, sender_msg_id, status, caption, local_copy_cleaned 
             FROM messages 
             WHERE COALESCE(stored_at, timestamp, 0) >= unixepoch() - 604800 AND (
                 (sender_id = ? AND receiver_id = ?) OR 
@@ -1653,6 +1673,172 @@ pub async fn update_file_path_by_id(
         .execute(pool)
         .await
         .map_err(|e| format!("更新 file_path 失败: {}", e))?;
+    Ok(())
+}
+
+// ── 下载目录树历史 / 待清理路径（用于迁移后的原文件重试清理） ──
+
+const DOWNLOAD_TREES_KEY: &str = "download_trees";
+const PENDING_CLEANUP_KEY: &str = "pending_cleanup";
+const EXPORTED_URIS_KEY: &str = "exported_uris";
+const EXPORTED_URIS_LIMIT: usize = 500;
+
+async fn read_json_list(pool: &sqlx::Pool<sqlx::Sqlite>, key: &str) -> Vec<String> {
+    match sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(Some(value)) => serde_json::from_str::<Vec<String>>(&value).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+async fn write_json_list(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    key: &str,
+    values: &[String],
+) -> Result<(), String> {
+    let encoded = serde_json::to_string(values).map_err(|error| error.to_string())?;
+    sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)")
+        .bind(key)
+        .bind(encoded)
+        .execute(pool)
+        .await
+        .map_err(|error| format!("保存 {key} 失败: {error}"))?;
+    Ok(())
+}
+
+/// 曾经授予给 LQChat 接收文件的系统目录（SAF tree URI）历史。
+/// 只有这些目录下的文档才可能是“应用自己导出的接收文件”。
+pub async fn get_download_trees(pool: &sqlx::Pool<sqlx::Sqlite>) -> Vec<String> {
+    read_json_list(pool, DOWNLOAD_TREES_KEY).await
+}
+
+pub async fn remember_download_tree(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    tree: &str,
+) -> Result<(), String> {
+    let trimmed = tree.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let mut trees = read_json_list(pool, DOWNLOAD_TREES_KEY).await;
+    if trees.iter().any(|item| item == trimmed) {
+        return Ok(());
+    }
+    trees.push(trimmed.to_string());
+    write_json_list(pool, DOWNLOAD_TREES_KEY, &trees).await
+}
+
+/// 迁移已经核对完成、但原文件还未能删除的路径；下次“立刻迁移”会重试清理。
+pub async fn get_pending_cleanup(pool: &sqlx::Pool<sqlx::Sqlite>) -> Vec<String> {
+    read_json_list(pool, PENDING_CLEANUP_KEY).await
+}
+
+pub async fn add_pending_cleanup(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    path: &str,
+) -> Result<(), String> {
+    let mut paths = read_json_list(pool, PENDING_CLEANUP_KEY).await;
+    if paths.iter().any(|item| item == path) {
+        return Ok(());
+    }
+    paths.push(path.to_string());
+    write_json_list(pool, PENDING_CLEANUP_KEY, &paths).await
+}
+
+pub async fn remove_pending_cleanup(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    path: &str,
+) -> Result<(), String> {
+    let mut paths = read_json_list(pool, PENDING_CLEANUP_KEY).await;
+    let before = paths.len();
+    paths.retain(|item| item != path);
+    if paths.len() == before {
+        return Ok(());
+    }
+    write_json_list(pool, PENDING_CLEANUP_KEY, &paths).await
+}
+
+/// 应用自己导出/迁移产生的 content:// 文档（精确来源凭据，用于区分用户原始文档）。
+pub async fn get_exported_uris(pool: &sqlx::Pool<sqlx::Sqlite>) -> Vec<String> {
+    read_json_list(pool, EXPORTED_URIS_KEY).await
+}
+
+pub async fn remember_exported_uri(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    uri: &str,
+) -> Result<(), String> {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let mut uris = read_json_list(pool, EXPORTED_URIS_KEY).await;
+    if uris.iter().any(|item| item == trimmed) {
+        return Ok(());
+    }
+    uris.push(trimmed.to_string());
+    if uris.len() > EXPORTED_URIS_LIMIT {
+        let excess = uris.len() - EXPORTED_URIS_LIMIT;
+        uris.drain(0..excess);
+    }
+    write_json_list(pool, EXPORTED_URIS_KEY, &uris).await
+}
+
+pub async fn forget_exported_uri(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    uri: &str,
+) -> Result<(), String> {
+    let mut uris = read_json_list(pool, EXPORTED_URIS_KEY).await;
+    let before = uris.len();
+    uris.retain(|item| item != uri);
+    if uris.len() == before {
+        return Ok(());
+    }
+    write_json_list(pool, EXPORTED_URIS_KEY, &uris).await
+}
+
+/// 迁移文件后批量更新记录引用：所有仍指向旧路径的消息一起改到新路径。
+pub async fn update_file_paths_by_old_path(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    old_path: &str,
+    new_path: &str,
+) -> Result<u64, String> {
+    let result = sqlx::query("UPDATE messages SET file_path = ? WHERE file_path = ?")
+        .bind(new_path)
+        .bind(old_path)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("更新文件路径失败: {}", e))?;
+    Ok(result.rows_affected())
+}
+
+/// 给一条文件消息附加文字说明（图片+文字合并成同一气泡）。
+pub async fn set_message_caption(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    msg_id: i64,
+    caption: &str,
+) -> Result<(), String> {
+    sqlx::query("UPDATE messages SET caption = ? WHERE id = ?")
+        .bind(caption)
+        .bind(msg_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("保存消息文字失败: {}", e))?;
+    Ok(())
+}
+
+/// 记录“发送成功后本机副本已被应用清理”，供文件卡片显示准确文案。
+pub async fn mark_local_copy_cleaned(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    msg_id: i64,
+) -> Result<(), String> {
+    sqlx::query("UPDATE messages SET local_copy_cleaned = 1 WHERE id = ?")
+        .bind(msg_id)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("更新本机副本清理状态失败: {}", e))?;
     Ok(())
 }
 

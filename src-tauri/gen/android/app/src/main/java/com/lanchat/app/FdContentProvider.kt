@@ -40,8 +40,26 @@ class FdContentProvider : ContentProvider() {
     }
 
     /**
+     * 应用自己创建的 outbox 发送副本（app data/outbox）。
+     * FileProvider 的 file_paths.xml 只映射 files/cache/external，且 applicationId 在
+     * 验收构建中会变化，无法用固定路径映射；这里用运行时 dataDir 解析，只暴露该目录。
+     */
+    private fun resolveOutboxFile(uri: Uri): File {
+        val fileName = uri.pathSegments.getOrNull(1)
+            ?: throw FileNotFoundException("Outbox file name is missing")
+        val appContext = context ?: throw FileNotFoundException("Provider context is unavailable")
+        val root = File(appContext.applicationInfo.dataDir, "outbox").canonicalFile
+        val file = File(root, fileName).canonicalFile
+        if (file.parentFile != root || !file.isFile) {
+            throw FileNotFoundException("Outbox file does not exist: $fileName")
+        }
+        return file
+    }
+
+    /**
      * 第三方 App 读取文件时触发。
      * URI 格式: content://com.lanchat.app.fdprovider/{msg_id}/{file_name}
+     * 或 content://com.lanchat.app.fdprovider/outbox/{file_name}
      */
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         val msgIdStr = uri.pathSegments.firstOrNull()
@@ -50,6 +68,12 @@ class FdContentProvider : ContentProvider() {
             if (mode != "r") throw FileNotFoundException("Stored files are read-only")
             val file = resolveStoredFile(uri)
             println("[FdContentProvider] open stored file: ${file.name}")
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        }
+        if (msgIdStr == "outbox") {
+            if (mode != "r") throw FileNotFoundException("Outbox files are read-only")
+            val file = resolveOutboxFile(uri)
+            println("[FdContentProvider] open outbox file: ${file.name}")
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         }
         val msgId = msgIdStr.toLongOrNull()
@@ -83,6 +107,12 @@ class FdContentProvider : ContentProvider() {
         val fileSize = if (msgIdStr == "stored") {
             try {
                 resolveStoredFile(uri).length()
+            } catch (_: FileNotFoundException) {
+                return null
+            }
+        } else if (msgIdStr == "outbox") {
+            try {
+                resolveOutboxFile(uri).length()
             } catch (_: FileNotFoundException) {
                 return null
             }

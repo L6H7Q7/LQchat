@@ -115,6 +115,7 @@ pub mod notification_windows;
 #[cfg(windows)]
 pub mod peer_persistence;
 pub mod peers;
+pub mod storage_ops;
 pub mod utils;
 pub mod web_server;
 
@@ -173,6 +174,7 @@ pub fn run() {
             commands::get_media_token,
             commands::delete_messages,
             commands::clear_chat_history,
+            commands::migrate_saved_files,
             commands::request_file,
             commands::delete_user_complete,
             commands::clear_offline_peers,

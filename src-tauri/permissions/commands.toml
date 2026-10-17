@@ -111,6 +111,11 @@ description = "Allows clearing all messages for a specific peer"
 commands.allow = ["clear_chat_history"]
 
 [[permission]]
+identifier = "allow-migrate-saved-files"
+description = "Allows moving already saved files into the configured download location"
+commands.allow = ["migrate_saved_files"]
+
+[[permission]]
 identifier = "allow-delete-user-complete"
 description = "Allows deleting a user and their full chat history"
 commands.allow = ["delete_user_complete"]

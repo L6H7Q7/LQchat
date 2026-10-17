@@ -18,6 +18,8 @@
 }
 
 body.android-app {
+  /* 列表行高：通知设备卡片的“首帧等高预留”复用同一变量，避免两处数字漂移。 */
+  --android-list-row: 72px;
   --android-bg: #f5f6fb;
   --android-card: #ffffff;
   --android-ink: #171c2a;
@@ -256,13 +258,17 @@ body.android-app .android-home {
   padding: max(16px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
 }
 
+/* 首页头部高度固定：名称/地址从占位文本切换为真实值时不会撑高或收缩。 */
 body.android-app .android-home-bar {
+  height: 48px;
   min-height: 48px;
+  max-height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 18px;
+  overflow: hidden;
 }
 
 body.android-app .android-local-device {
@@ -358,7 +364,11 @@ body.android-app .android-list-toolbar {
 }
 
 body.android-app .android-count-label {
+  min-width: 9.5ch;
   min-height: 30px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: inline-flex;
   align-items: center;
   padding: 0 11px;
@@ -413,10 +423,23 @@ body.android-app .android-receive-list:not(:empty) {
   padding-top: 6px;
 }
 
+/* 聊天列表的空状态与“一行真实设备”等高：有设备后空状态被隐藏、换成一行条目，
+   卡片高度不因首次出现设备而跳变；后续设备增减仍按真实列表增长。 */
+body.android-app #android-chat-empty {
+  min-height: calc(var(--android-list-row) + 6px);
+}
+
+/* 通知设备卡片里“本机”条目必然存在，但它是异步加入的。
+   列表为空时先按“一行 + 6px 上内边距”预留高度，首帧卡片高度就等于加载完成后的高度；
+   一旦有真实条目（本机或其它设备）加入，:empty 不再命中，列表按正常增减变化。 */
+body.android-app #android-receive-list:empty {
+  min-height: calc(var(--android-list-row) + 6px);
+}
+
 body.android-app #user-list li,
 body.android-app .ns-device {
   width: 100%;
-  min-height: 72px;
+  min-height: var(--android-list-row);
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto auto;
   align-items: center;
@@ -693,7 +716,8 @@ body.android-app .desktop-download-setting {
   display: none;
 }
 
-body.android-app #android-download-location-btn {
+body.android-app #android-download-location-btn,
+body.android-app #android-migrate-files-btn {
   width: 100%;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -722,7 +746,8 @@ body.android-app .android-download-value-group {
   gap: 6px;
 }
 
-body.android-app #android-download-value {
+body.android-app #android-download-value,
+body.android-app #android-migrate-value {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -742,9 +767,21 @@ body.android-app .android-download-value-group svg {
   stroke-linejoin: round;
 }
 
-body.android-app #android-download-location-btn:focus-visible {
+body.android-app #android-download-location-btn:focus-visible,
+body.android-app #android-migrate-files-btn:focus-visible {
   outline: 2px solid var(--android-purple);
   outline-offset: -2px;
+}
+
+body.android-app #android-migrate-value {
+  color: var(--android-muted);
+  font-size: 13px;
+}
+
+body.android-app .android-migrate-status {
+  display: block;
+  padding: 10px 2px 14px;
+  line-height: 1.4;
 }
 
 body.android-app .android-section-label,
@@ -1469,6 +1506,25 @@ body.android-app .toggle-switch input:checked + .toggle-slider {
 
 body.android-app .android-permission-row:last-child {
   border-bottom: 0;
+}
+
+/* 说明区（如“读取后台状态失败”）预留单行高度，异步文案出现时不推挤开关行。 */
+body.android-app .android-permission-row .setting-hint {
+  grid-column: 1 / -1;
+  min-height: 16px;
+  margin: 0;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.android-app #shared-reminder-settings-status,
+body.android-app .android-migrate-status {
+  min-height: 18px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 body.android-app .android-battery-alert-row {

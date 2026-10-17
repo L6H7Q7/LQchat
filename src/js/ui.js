@@ -7,11 +7,36 @@ const ICON_CANCEL_X =
 // 初始化改名功能（点击用户名直接改名）
 function initNameEditor() {
   const nameDisplay = document.getElementById("my-name");
+  const androidDeviceButton = document.getElementById("android-local-device-btn");
+  const androidNameDisplay = document.getElementById("android-device-name");
   const editPanel = document.getElementById("edit-name-panel");
   const nameInput = document.getElementById("new-name-input");
   const saveBtn = document.getElementById("save-name-btn");
   const cancelBtn = document.getElementById("cancel-name-btn");
   const errorMsg = document.getElementById("error-msg");
+
+  const isAndroidShell = () => document.body.classList.contains("android-app");
+
+  const openNameEditor = (prefill = "") => {
+    editPanel.style.display = "block";
+    nameInput.value = prefill;
+    nameInput.focus();
+    if (prefill) nameInput.select();
+    errorMsg.textContent = "";
+    if (isAndroidShell() && location.hash !== "#edit-name") {
+      history.pushState({ nameEditor: true }, "", "#edit-name");
+    }
+  };
+  const closeNameEditor = () => {
+    editPanel.style.display = "none";
+    errorMsg.textContent = "";
+    if (isAndroidShell() && location.hash === "#edit-name") history.back();
+  };
+  const toggleNameEditor = (prefill = "") => {
+    if (editPanel.style.display === "block") closeNameEditor();
+    else openNameEditor(prefill);
+  };
+  window.closeNameEditor = closeNameEditor;
 
   // 点击用户名切换改名面板
   nameDisplay.addEventListener("keydown", event => {
@@ -20,22 +45,26 @@ function initNameEditor() {
       nameDisplay.click();
     }
   });
-  nameDisplay.addEventListener("click", () => {
-    if (editPanel.style.display === "block") {
-      editPanel.style.display = "none";
-      errorMsg.textContent = "";
-    } else {
-      editPanel.style.display = "block";
-      nameInput.value = "";
-      nameInput.focus();
-      errorMsg.textContent = "";
-    }
+  nameDisplay.addEventListener("click", () => toggleNameEditor(""));
+
+  // 首页设备名称：点击直接进入名称编辑模式（不再展开设备设置页）。
+  androidDeviceButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    toggleNameEditor((androidNameDisplay?.textContent || "").trim());
   });
+
+  if (isAndroidShell()) {
+    window.addEventListener("popstate", () => {
+      if (editPanel.style.display === "block" && location.hash !== "#edit-name") {
+        editPanel.style.display = "none";
+        errorMsg.textContent = "";
+      }
+    });
+  }
 
   // 点击取消按钮
   cancelBtn.addEventListener("click", () => {
-    editPanel.style.display = "none";
-    errorMsg.textContent = "";
+    closeNameEditor();
   });
 
   // 点击保存按钮
@@ -69,9 +98,8 @@ function initNameEditor() {
       errorMsg.textContent = t("name_saved");
       await new Promise(r => setTimeout(r, 1500));
 
-      editPanel.style.display = "none";
       errorMsg.style.color = "";
-      errorMsg.textContent = "";
+      closeNameEditor();
 
       console.log("[UI] 用户名更新成功:", updatedName);
     } catch (e) {
@@ -506,9 +534,14 @@ function initChat() {
     chatInput.style.height = newHeight + "px";
   }
 
-  // 输入时调整高度
+  // 输入时调整高度；应用选择面板展开时输入的是搜索词
   chatInput.addEventListener("input", () => {
     adjustTextareaHeight();
+    if (androidAttachmentState.searchActive) {
+      androidAttachmentState.appQuery = chatInput.value;
+      renderAndroidAttachmentPanel();
+      return;
+    }
     updateAndroidComposerState();
   });
 
@@ -602,6 +635,9 @@ function initChat() {
   // 初始化多选模式
   initSelectMode();
 
+  // 聊天右上角：清除聊天数据
+  initClearChatDataButton();
+
   // 初始化回到底部按钮
   initScrollToBottomBtn();
 }
@@ -616,7 +652,45 @@ const androidAttachmentState = {
   selected: { image: new Map(), file: new Map(), app: new Map() },
   targetPeer: null,
   targetSession: null,
+  // 应用选择面板展开时，底部输入框切换为搜索框；草稿在收起后恢复。
+  searchActive: false,
+  appQuery: "",
+  composerDraft: "",
 };
+
+function appMatchesSearch(app, query) {
+  const keyword = String(query || "").trim().toLowerCase();
+  if (!keyword) return true;
+  const label = String(app?.label || app?.name || "").toLowerCase();
+  const packageName = String(app?.packageName || app?.package_name || "").toLowerCase();
+  return label.includes(keyword) || packageName.includes(keyword);
+}
+
+// 应用选择面板展开时把输入框切成搜索框，收起时恢复聊天输入与草稿。
+function setAndroidAttachmentSearch(active) {
+  const chatInput = document.getElementById("chat-input");
+  if (!chatInput) return;
+  const state = androidAttachmentState;
+  if (active) {
+    if (!state.searchActive) {
+      state.composerDraft = chatInput.value;
+      state.searchActive = true;
+    }
+    chatInput.value = state.appQuery;
+    chatInput.placeholder = "搜索应用名称或包名";
+    chatInput.setAttribute("aria-label", "搜索应用名称或包名");
+  } else {
+    if (!state.searchActive) return;
+    state.searchActive = false;
+    state.appQuery = "";
+    chatInput.value = state.composerDraft || "";
+    state.composerDraft = "";
+    chatInput.placeholder = "输入消息...";
+    chatInput.setAttribute("aria-label", "输入消息");
+  }
+  chatInput.style.height = "auto";
+  updateAndroidComposerState();
+}
 
 window.AndroidAppLoading = (() => {
   let owner = null;
@@ -690,6 +764,7 @@ function setAndroidAttachmentPanel(open) {
   const wasOpen = panel?.classList.contains("open");
   panel?.classList.toggle("open", open);
   if (!open) window.AndroidAppLoading.hide("send-app");
+  if (!open && androidAttachmentState.searchActive) setAndroidAttachmentSearch(false);
   if (open && !wasOpen && window.innerWidth <= 768 && location.hash !== "#chat-attachment") {
     history.pushState({ attachmentOpen: true }, "", "#chat-attachment");
   }
@@ -706,7 +781,9 @@ function updateAndroidAttachmentMeta() {
 
 function updateAndroidComposerState() {
   if (!isAndroidApp() || window.selectMode?.active) return;
-  const hasText = !!document.getElementById("chat-input")?.value.trim();
+  const hasText =
+    !androidAttachmentState.searchActive &&
+    !!document.getElementById("chat-input")?.value.trim();
   const kind = androidAttachmentState.kind;
   const count = kind === "image" || kind === "app"
     ? androidAttachmentState.selected[kind].size
@@ -727,13 +804,18 @@ function renderAndroidAttachmentPanel() {
 
   const source = kind === "image"
     ? androidAttachmentState.images.filter((item) => androidAttachmentState.album === "全部图片" || item.album === androidAttachmentState.album)
-    : androidAttachmentState.apps;
+    : kind === "app"
+      ? androidAttachmentState.apps.filter((item) => appMatchesSearch(item, androidAttachmentState.appQuery))
+      : androidAttachmentState.apps;
   if (!source.length) {
+    const hasQuery = kind === "app" && androidAttachmentState.appQuery.trim() !== "";
     const message = kind === "app" && androidAttachmentState.appsLoadError
       ? androidAttachmentState.appsLoadError
-      : kind === "app" && androidAttachmentState.appsLoaded
-        ? "未发现可发送的应用"
-        : `正在读取${kind === "image" ? "相册" : "已安装 App"}…`;
+      : hasQuery && androidAttachmentState.appsLoaded
+        ? "未找到匹配的应用"
+        : kind === "app" && androidAttachmentState.appsLoaded
+          ? "未发现可发送的应用"
+          : `正在读取${kind === "image" ? "相册" : "已安装 App"}…`;
     body.innerHTML = `<div class="android-empty-state">${message}</div>`;
     return;
   }
@@ -831,6 +913,7 @@ async function openAndroidAttachment(kind) {
   androidAttachmentState.targetPeer = currentTarget.peer;
   androidAttachmentState.targetSession = currentTarget.session;
   androidAttachmentState.kind = kind;
+  if (kind !== "app") setAndroidAttachmentSearch(false);
   updateAndroidComposerState();
   const tauri = window.__TAURI__;
   if (kind === "file") {
@@ -846,6 +929,8 @@ async function openAndroidAttachment(kind) {
   } else if (kind === "app") {
     androidAttachmentState.appsLoaded = false;
     androidAttachmentState.appsLoadError = "";
+    androidAttachmentState.appQuery = "";
+    setAndroidAttachmentSearch(true);
     await window.AndroidAppLoading.show("send-app");
     await tauri.core.invoke("load_android_apps").catch((e) => {
       console.error("[UI] App 列表读取失败:", e);
@@ -871,28 +956,51 @@ async function sendAndroidSelectedAttachments() {
   if (!ensureChatPeerOnline(target.peer)) return;
   const items = Array.from(selected.values());
   selected.clear();
+  // 应用选择时输入框是搜索框：搜索词绝不能当成聊天内容发出去。
+  // 这里同步退出搜索态并恢复草稿，再关闭面板，避免 history.back() 异步恢复造成竞态。
+  const searchMode = androidAttachmentState.searchActive;
+  const draftText = searchMode ? "" : (document.getElementById("chat-input")?.value.trim() || "");
+  if (searchMode) setAndroidAttachmentSearch(false);
   updateAndroidComposerState();
   if (document.getElementById("android-attachment-panel")?.classList.contains("open")) {
     if (location.hash === "#chat-attachment") history.back();
     else setAndroidAttachmentPanel(false);
   }
-  await sendAndroidAttachments(items, target);
+  await sendAndroidAttachments(items, target, kind, draftText);
 }
 
-async function sendAndroidAttachments(items, target) {
+async function sendAndroidAttachments(items, target, kind = androidAttachmentState.kind, draftOverride = null) {
   if (!items.length) return;
   if (!target || !chatRenderController.isCurrent(target.session)) {
     showMessageActionToast("聊天对象已切换，请重新选择附件");
     return;
   }
   if (!ensureChatPeerOnline(target.peer)) return;
-  if (document.getElementById("chat-input")?.value.trim()) {
+  // 图片 + 文字：合并成同一条消息（图片在上、空一行、文字在下），不再拆成两条。
+  const chatInput = document.getElementById("chat-input");
+  const draftText = draftOverride === null ? (chatInput?.value.trim() || "") : draftOverride;
+  const mergeCaption = kind === "image" && draftText !== "";
+  if (draftText && !mergeCaption) {
     await sendMessage(target.peer);
   }
-  for (const item of items) {
+  if (mergeCaption) {
+    chatInput.value = "";
+    chatInput.style.height = "auto";
+    updateAndroidComposerState();
+  }
+  for (const [index, item] of items.entries()) {
     if (!ensureChatPeerOnline(target.peer)) break;
+    // 已安装应用发送时使用真实应用名称，不要所有安装包都叫 base.apk。
+    const sendName = kind === "app"
+      ? (/\.apk$/i.test(item.name || "")
+          ? item.name
+          : `${String(item.label || item.name || "应用").replace(/\.apk$/i, "")}.apk`)
+      : undefined;
     try {
-      await apiSendFile(target.peer.id, target.peer.addr, null, item.uri);
+      await apiSendFile(target.peer.id, target.peer.addr, null, item.uri, {
+        fileName: sendName,
+        caption: mergeCaption && index === 0 ? draftText : undefined,
+      });
     } catch (e) {
       console.error("[UI] 安卓附件发送失败:", item.name, e);
       if (getActionErrorMessage(e).includes("对方不在线")) {
@@ -1060,6 +1168,8 @@ function performCloseChatUI() {
   const chatContainer = document.getElementById("chat-container");
   if (chatContainer) chatContainer.style.display = "none";
   document.body.classList.remove("chat-open");
+  setAndroidAttachmentPanel(false);
+  clearAndroidAttachmentSelections();
   chatRenderController.close();
   window.currentChatPeer = null;
   updateListHighlight(null); // 清除高亮
@@ -1085,13 +1195,14 @@ window.addEventListener("popstate", function (event) {
     return;
   }
   if (document.body.classList.contains("android-app") &&
-      ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash)) return;
+      ["#settings", "#edit-name", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash)) return;
   const chatContainer = document.getElementById("chat-container");
 
   const attachmentPanel = document.getElementById("android-attachment-panel");
   if (attachmentPanel?.classList.contains("open")) {
     attachmentPanel.classList.remove("open");
     window.AndroidAppLoading.hide("send-app");
+    if (androidAttachmentState.searchActive) setAndroidAttachmentSearch(false);
     if (window.innerWidth <= 768 && window.location.hash !== "#chat") {
       window.history.replaceState({ chatOpen: true }, "", "#chat");
     }
@@ -1163,6 +1274,8 @@ window.addEventListener("popstate", function (event) {
 // 发送消息
 async function sendMessage(targetPeer = window.currentChatPeer) {
   if (!targetPeer) return false;
+  // 展开应用选择时底部输入框是搜索框，不能把搜索词发出去。
+  if (androidAttachmentState.searchActive) return false;
   if (!ensureChatPeerOnline(targetPeer)) return false;
 
   const chatInput = document.getElementById("chat-input");
@@ -1390,6 +1503,23 @@ function formatAndroidStoredPath(filePath, fileName) {
   }
 
   return filePath.replaceAll("\\", "/");
+}
+
+// 只取“实际保存的文件夹”部分用于气泡外展示；真实路径仍保存在 title 与数据里。
+function displayDirectoryOf(filePath, fileName) {
+  // Windows：保留原始盘符/反斜杠/UNC 形式，只截到所在文件夹。
+  if (document.body.classList.contains("windows-app")) {
+    const raw = String(filePath || "");
+    if (raw.startsWith("fd:")) return "临时文件/";
+    const lastSep = Math.max(raw.lastIndexOf("\\"), raw.lastIndexOf("/"));
+    if (lastSep <= 0) return raw ? `${raw}/` : "本机存储/";
+    return raw.slice(0, lastSep + 1);
+  }
+  const display = formatAndroidStoredPath(filePath, fileName);
+  const trimmed = String(display || "").replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (index <= 0) return trimmed ? `${trimmed}/` : "本机存储/";
+  return `${trimmed.slice(0, index + 1)}`;
 }
 
 function showMessageActionToast(text, duration = 1400) {
@@ -1687,6 +1817,8 @@ function formatTransferBytes(bytes) {
   return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+const FILE_STATUS_TEXT_STATES = new Set(["failed", "chunk_failed", "save_failed", "invalid"]);
+
 function renderFileTransfer(msgEl, status, transferred, total, speedMbS = 0, force = false) {
   if (!msgEl?.querySelector(".message-file")) return;
   const statusEl = msgEl.querySelector(".file-transfer-status");
@@ -1706,13 +1838,23 @@ function renderFileTransfer(msgEl, status, transferred, total, speedMbS = 0, for
   progress.dataset.transferred = String(bytes);
   progress.dataset.status = status;
   progress.dataset.total = String(size);
-  statusEl.textContent = fileTransferLabel(status, isSent);
+  // 仅失败类状态需要文字说明；“已发送/已完成/正在发送”等保持省略，避免成功气泡里再出现状态字。
+  statusEl.textContent = FILE_STATUS_TEXT_STATES.has(status) ? fileTransferLabel(status, isSent) : "";
+  // 同一行内：有错误信息时隐藏保存目录，只显示错误（红色）与时间。
+  const metaRow = statusEl.parentElement;
+  if (metaRow && metaRow.classList.contains("message-meta")) {
+    metaRow.classList.toggle("meta-error", statusEl.textContent.trim() !== "");
+  }
   statusEl.className = "file-transfer-status";
   if (["failed", "chunk_failed", "save_failed", "invalid"].includes(status)) {
     statusEl.classList.add("file-transfer-error");
   }
   const active = ["uploading", "downloading", "saving", "retrying"].includes(status);
-  progress.hidden = !active;
+  // 用 class 而不是 hidden 属性：全局 .notification-enabled [hidden] 规则会 display:none，
+  // 那样进度条一隐藏就会让文件卡片塌陷。
+  progress.hidden = false;
+  progress.classList.toggle("is-active", active);
+  progress.setAttribute("aria-hidden", active ? "false" : "true");
   progress.querySelector(".file-transfer-fill").style.width = `${percent}%`;
   progress.querySelector(".file-transfer-bar").setAttribute("aria-valuenow", String(percent));
   const speed = Math.max(0, Number(speedMbS) || 0);
@@ -1770,6 +1912,8 @@ function createMessageElement(message, isSent) {
   let externalFileActionBtn = null;
   let refreshAndroidFileState = null;
   let renderAndroidFileState = null;
+  // 保存位置显示在气泡外面（气泡内只保留卡片/图片与文字）。
+  let outsideSaveStateDiv = null;
 
   // ---- 构建消息主体 ----
   if (message.msg_type === "file") {
@@ -1834,21 +1978,41 @@ function createMessageElement(message, isSent) {
     }
     contentDiv.appendChild(fileContainer);
 
+    // 图片/文件与文字合并发送：图片在上、空一行、文字在下，全部在同一个气泡内。
+    if (typeof message.caption === "string" && message.caption.trim()) {
+      const captionEl = document.createElement("div");
+      captionEl.className = "message-caption";
+      captionEl.textContent = message.caption;
+      contentDiv.appendChild(captionEl);
+    }
+
     const isAndroidFile = Boolean(
       window.__TAURI__ &&
       navigator.userAgent.includes("Android") &&
       message.file_path
     );
+    // Windows：没有 Android 的文件状态 API，直接展示真实所在文件夹（仍保留完整路径）。
+    const isWindowsFile = Boolean(
+      window.__TAURI__ && document.body.classList.contains("windows-app") && message.file_path
+    );
+    if (isWindowsFile && !isAndroidFile && message.msg_type === "file") {
+      const saveStateDiv = document.createElement("div");
+      saveStateDiv.className = "file-save-state file-save-outside";
+      saveStateDiv.title = message.file_path;
+      saveStateDiv.textContent = displayDirectoryOf(message.file_path, message.file_name || message.content);
+      outsideSaveStateDiv = saveStateDiv;
+    }
     let androidFileState = "UNKNOWN";
     if (isAndroidFile) {
       const saveStateDiv = document.createElement("div");
-      saveStateDiv.className = "file-save-state";
+      saveStateDiv.className = "file-save-state file-save-outside";
       saveStateDiv.title = message.file_path;
-      contentDiv.appendChild(saveStateDiv);
+      outsideSaveStateDiv = saveStateDiv;
 
       renderAndroidFileState = (state) => {
         androidFileState = state;
-        saveStateDiv.className = "file-save-state";
+        // 保留“气泡外”变体类，避免重置成气泡内的盒状样式。
+        saveStateDiv.className = "file-save-state file-save-outside";
         const storedPath = formatAndroidStoredPath(
           message.file_path,
           message.file_name || message.content,
@@ -1860,7 +2024,15 @@ function createMessageElement(message, isSent) {
 
         if (stateType === "DELETED" || message.file_status === "deleted") {
           saveStateDiv.classList.add("deleted");
-          saveStateDiv.textContent = "文件已删除";
+          // 只有“已确认发送成功”且应用确实清理了本机副本时才显示完整文案，
+          // 其余情况（用户自己删除、传输失败等）仍然只说“文件已删除”。
+          const sentAndCopyGone =
+            isSent &&
+            ["sent", "accepted", "received", "completed"].includes(message.file_status) &&
+            message.local_copy_cleaned === true;
+          saveStateDiv.textContent = sentAndCopyGone
+            ? "发送成功，本机对应文件已删除"
+            : "文件已删除";
         } else if (stateType === "INACCESSIBLE") {
           saveStateDiv.classList.add("inaccessible");
           saveStateDiv.textContent = "文件不可访问 · 保存权限已失效";
@@ -1878,7 +2050,9 @@ function createMessageElement(message, isSent) {
           saveStateDiv.textContent = `保存失败 · 已保留临时文件：${storedPath}`;
         } else {
           saveStateDiv.classList.add("saved");
-          saveStateDiv.textContent = `${isSent ? "文件位置" : "保存到"}：${storedPath}`;
+          // 气泡下方只显示“实际保存的文件夹”，不加任何前缀；完整路径保留在 title 里。
+          saveStateDiv.textContent = displayDirectoryOf(message.file_path, message.file_name || message.content);
+          saveStateDiv.title = message.file_path;
         }
       };
 
@@ -2174,6 +2348,11 @@ function createMessageElement(message, isSent) {
     contentDiv.appendChild(textSpan);
   }
 
+  if (message.msg_type === "file") {
+    // 普通文件/APK 用单层卡片；图片消息单独标记（图片与文字共用同一气泡）。
+    messageDiv.classList.add(contentDiv.querySelector(".image-preview") ? "message-image-msg" : "message-file-only");
+  }
+
   // 普通文本气泡点击即复制；模型选择等交互型消息保持原有行为。
   if (
     message.msg_type === "text" &&
@@ -2193,11 +2372,12 @@ function createMessageElement(message, isSent) {
   // 每个文件消息持有独立进度；历史记录只持久化终态，传输字节由实时事件补齐。
   const statusDiv = document.createElement("div");
   statusDiv.className = "file-transfer-status";
+  // 进度条与失败提示放在气泡/卡片之外：卡片保持固定 82px，成功时不留下大片空白。
+  let progressDiv = null;
   if (message.msg_type === "file") {
-    const progress = document.createElement("div");
-    progress.className = "file-transfer-progress";
-    progress.innerHTML = '<div class="file-transfer-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div class="file-transfer-fill"></div></div><div class="file-transfer-detail"></div>';
-    contentDiv.append(statusDiv, progress);
+    progressDiv = document.createElement("div");
+    progressDiv.className = "file-transfer-progress";
+    progressDiv.innerHTML = '<div class="file-transfer-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div class="file-transfer-fill"></div></div><div class="file-transfer-detail"></div>';
   }
 
   // 优先级 1: 只要数据库中 status 是 pending,一律展示待上线
@@ -2278,7 +2458,24 @@ function createMessageElement(message, isSent) {
   } else {
     messageDiv.appendChild(contentDiv);
   }
-  messageDiv.appendChild(timeDiv);
+  const isMetaShell = document.body.classList.contains("android-app") || document.body.classList.contains("windows-app");
+  if (progressDiv) messageDiv.append(progressDiv);
+  if (isMetaShell && message.msg_type === "file") {
+    // 气泡外同一行：左=保存目录（或错误/状态），右=时间。时间固定不收缩、左侧单行省略。
+    const metaRow = document.createElement("div");
+    metaRow.className = "message-meta";
+    metaRow.append(statusDiv);
+    if (outsideSaveStateDiv) metaRow.append(outsideSaveStateDiv);
+    const timeCell = document.createElement("div");
+    timeCell.className = "message-meta-time";
+    timeCell.appendChild(timeDiv);
+    metaRow.append(timeCell);
+    messageDiv.appendChild(metaRow);
+  } else {
+    if (message.msg_type === "file") messageDiv.append(statusDiv);
+    if (outsideSaveStateDiv) messageDiv.appendChild(outsideSaveStateDiv);
+    messageDiv.appendChild(timeDiv);
+  }
 
   // 多选模式拦截
   if (window.selectMode && window.selectMode.active) {
@@ -2935,9 +3132,6 @@ function initRefreshCountdown() {
 function initSettings() {
   const settingsBtn = document.getElementById("settings-btn");
   const settingsPanel = document.getElementById("settings-panel");
-  const deviceSettingsPanel = document.getElementById("android-device-settings-panel");
-  const deviceSettingsButton = document.getElementById("android-local-device-btn");
-  const deviceSettingsBackButton = document.getElementById("android-device-settings-back-btn");
   const notificationOptionsPanel = document.getElementById("android-notification-options-panel");
   const backgroundOptionsPanel = document.getElementById("android-background-options-panel");
   const downloadOptionsPanel = document.getElementById("android-download-options-panel");
@@ -2952,11 +3146,9 @@ function initSettings() {
   const dbPathSetting = document.getElementById("db-path-setting");
   const settingsErrorMsg = document.getElementById("settings-error-msg");
   const settingsSuccessMsg = document.getElementById("settings-success-msg");
-  const settingsNameInput = document.getElementById("settings-device-name-input");
   const settingsBackBtn = document.getElementById("android-settings-back-btn");
   const permissionFileToggle = document.getElementById("android-permission-file-toggle");
   let initialPort = "8888";
-  let initialName = "";
   let initialDbPath = "";
   let initialDlPath = "";
   let initialAutoDl = true;
@@ -3108,6 +3300,8 @@ function initSettings() {
   }
   let saving = false;
   let loading = false;
+  // 首次成功读取配置前使用中性占位；之后重开设置保持已知真实状态，只禁过渡。
+  let settingsHydrated = false;
   let saveTimer = null;
   let successTimer = null;
   let changeVersion = 0;
@@ -3139,9 +3333,8 @@ function initSettings() {
   };
   if (isAndroid) {
     window.addEventListener("popstate", () => {
-      const inSettings = ["#settings", "#device-settings", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash);
+      const inSettings = ["#settings", "#push-details", "#push-apps", "#notification-options", "#custom-reminder", "#background-options", "#download-options"].includes(location.hash);
       settingsPanel.style.display = inSettings ? "block" : "none";
-      deviceSettingsPanel?.classList.toggle("is-open", location.hash === "#device-settings");
       notificationOptionsPanel?.classList.toggle("is-open", location.hash === "#notification-options");
       backgroundOptionsPanel?.classList.toggle("is-open", location.hash === "#background-options");
       downloadOptionsPanel?.classList.toggle("is-open", location.hash === "#download-options");
@@ -3325,11 +3518,14 @@ function initSettings() {
     } else {
       if (loading || saving) return;
       loading = true;
+      // 读取配置期间一律禁用过渡；仅在“首次读取、尚未知道真实状态”时使用中性占位。
+      // 这样重开设置时不会把已知的 checked 临时显示成关闭态。
+      document.body.classList.add("settings-no-anim");
+      if (!settingsHydrated) document.body.classList.add("settings-loading");
       if (isAndroid && location.hash !== route) {
         history.pushState({ settingsOpen: true }, "", route);
       }
       settingsPanel.style.display = "block";
-      deviceSettingsPanel?.classList.toggle("is-open", isAndroid && route === "#device-settings");
       settingsErrorMsg.textContent = "";
       settingsSuccessMsg.textContent = "";
       settingsSuccessMsg.classList.remove("show");
@@ -3337,11 +3533,8 @@ function initSettings() {
       const reminderStatus = document.getElementById("shared-reminder-settings-status");
       if (reminderStatus) reminderStatus.textContent = "";
 
+      let loadFailed = false;
       try {
-        if (settingsNameInput) {
-          initialName = await apiGetMyName();
-          settingsNameInput.value = initialName;
-        }
         const settings = await apiGetSettings();
         const defaultDlPath = await getDefaultDownloadPath();
 
@@ -3409,15 +3602,23 @@ function initSettings() {
         await refreshBackgroundReceiveState();
         await window.NotificationUI?.refreshSettings?.();
       } catch (e) {
+        loadFailed = true;
         settingsErrorMsg.textContent = "加载设置失败: " + String(e?.message || e);
       } finally {
         loading = false;
+        // 分阶段恢复：
+        // 1) 先去掉中性占位（真实 checked 的最终 transform 生效），此时 settings-no-anim 仍在，不会播放过渡；
+        // 2) 等两个渲染机会（不是固定延时）让最终位置真正落屏后，再恢复 0.3s 用户交互动画。
+        document.body.classList.remove("settings-loading");
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => document.body.classList.remove("settings-no-anim"));
+        });
+        if (!loadFailed) settingsHydrated = true;
       }
 
     }
   };
   settingsBtn.addEventListener("click", () => void openSettings());
-  deviceSettingsButton?.addEventListener("click", () => void openSettings("#device-settings"));
   const openSettingsSubpage = (hash, panel) => {
     panel?.classList.add("is-open");
     panel.scrollTop = 0;
@@ -3443,11 +3644,6 @@ function initSettings() {
     autoDownloadToggle.checked = androidAutoDownloadToggle.checked;
     scheduleAutoSave();
   });
-  deviceSettingsBackButton?.addEventListener("click", () => {
-    if (location.hash === "#device-settings") history.back();
-    else deviceSettingsPanel?.classList.remove("is-open");
-  });
-
   settingsBackBtn?.addEventListener("click", closeSettings);
   settingsCloseBtn?.addEventListener("click", closeSettings);
   permissionFileToggle?.addEventListener("change", () => {
@@ -3461,6 +3657,57 @@ function initSettings() {
   });
   androidDownloadButton?.addEventListener("click", () => {
     if (isAndroid && !saving && !loading) choosePathBtn.click();
+  });
+
+  // ── “立刻迁移”：把当前已保存的文件搬到上面的下载位置 ──
+  const androidMigrateButton = document.getElementById("android-migrate-files-btn");
+  const androidMigrateStatus = document.getElementById("android-migrate-status");
+  const setMigrateStatus = (message = "") => {
+    if (androidMigrateStatus) androidMigrateStatus.textContent = message;
+  };
+
+  async function runFileMigration() {
+    // 先把尚未落盘的下载位置保存，避免迁移到旧目录。
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      await saveSettingsAutomatically();
+    }
+    setMigrateStatus("正在迁移…");
+    try {
+      const report = await apiMigrateSavedFiles();
+      const failures = Array.isArray(report?.failures) ? report.failures : [];
+      const migrated = Number(report?.migrated) || 0;
+      const already = Number(report?.already_in_target) || 0;
+      if (failures.length) {
+        const first = failures[0]?.reason ? `（${failures[0].reason}）` : "";
+        setMigrateStatus(`${failures.length} 个文件迁移失败${first}，可再次点击重试`);
+        showMessageActionToast(`${failures.length} 个文件迁移失败，可重试`, 6000);
+      } else {
+        setMigrateStatus(
+          migrated > 0
+            ? `已迁移 ${migrated} 个文件${already > 0 ? `，${already} 个已在目标位置` : ""}`
+            : already > 0
+              ? "文件已全部在下载位置"
+              : "没有需要迁移的文件",
+        );
+        showMessageActionToast(migrated > 0 ? "迁移完成" : "没有需要迁移的文件", 2000);
+      }
+      await refreshBackgroundReceiveState();
+    } catch (error) {
+      const message = "迁移失败：" + getActionErrorMessage(error);
+      setMigrateStatus(message);
+      showMessageActionToast(message, 4000);
+    }
+  }
+
+  androidMigrateButton?.addEventListener("click", () => {
+    if (saving || loading) return;
+    showConfirm(
+      "确定要把当前已保存的文件移动到设置的下载位置吗？" +
+        "迁移会先复制并核对目标文件完整，确认无误后才删除原文件；失败的项目可以再次点击重试。",
+      runFileMigration,
+    );
   });
 
   // 选择下载路径
@@ -3559,17 +3806,6 @@ function initSettings() {
         if (document.activeElement !== portInput) portInput.value = String(portNum);
       }
 
-      const deviceName = document.activeElement === settingsNameInput
-        ? initialName : (settingsNameInput?.value.trim() ?? initialName);
-      if (isAndroid && !deviceName) {
-        settingsNameInput?.focus();
-        throw new Error(t("name_empty"));
-      }
-      if (isAndroid && deviceName.length > 50) {
-        settingsNameInput?.focus();
-        throw new Error(t("name_too_long"));
-      }
-
       // 空值恢复默认
       const dlPath = isAndroid
         ? (androidDownloadTarget || (await getDefaultDownloadPath()))
@@ -3599,7 +3835,6 @@ function initSettings() {
       const closeToTray = isWindowsDesktop ? closeToTrayToggle.checked : undefined;
       const autostartEnabled = isWindowsDesktop ? autostartToggle.checked : false;
       const startMinimized = isWindowsDesktop ? startMinimizedToggle.checked : undefined;
-      const nameChanged = isAndroid && deviceName !== initialName;
       const backgroundSettings = supportsLocalReminders ? {
         keep_running: backgroundKeepRunningToggle.checked,
         start_on_boot: backgroundStartOnBootToggle.checked,
@@ -3634,13 +3869,6 @@ function initSettings() {
           initialCloseToTray = closeToTray;
           initialStartMinimized = startMinimized;
         }
-      }
-      if (nameChanged) {
-        const updatedName = await apiUpdateMyName(deviceName);
-        didSave = true;
-        initialName = updatedName;
-        document.getElementById("my-name").textContent = updatedName;
-        document.getElementById("android-device-name").textContent = updatedName;
       }
       if (window.__TAURI__) {
         if (notificationsEnabled !== initialNotifications) {
@@ -3736,7 +3964,7 @@ function initSettings() {
     backgroundStartOnBootToggle, backgroundExcludeRecentsToggle]) {
     toggle?.addEventListener("change", () => scheduleAutoSave());
   }
-  for (const input of [settingsNameInput, portInput, dbPathInput, downloadPathInput,
+  for (const input of [portInput, dbPathInput, downloadPathInput,
     batteryAlertIntervalInput, batteryAlertRepeatInput]) {
     input?.addEventListener("blur", () => {
       if (!loading) scheduleAutoSave();
@@ -4996,22 +5224,108 @@ async function clearOfflinePeerDevices() {
     return;
   }
   showConfirm(
-    `确定清除 ${offline.length} 台当前不在局域网的设备吗？聊天记录会保留，设备再次出现时会重新加入列表。`,
+    `确定清除 ${offline.length} 台当前不在局域网的设备吗？将同时删除这些设备的聊天记录，` +
+      "以及本机管理的对应附件、接收文件与 APK 副本，删除后无法恢复。" +
+      "其他聊天与共享引用的文件、您发送的原始文件和已安装应用都会保留；" +
+      "本机通知记录与在线设备不受影响。",
     async () => {
-      const removed = await apiClearOfflinePeers();
-      if (window.currentChatPeer && removed.includes(window.currentChatPeer.id)) {
+      const result = await apiClearOfflinePeers();
+      const cleared = result.cleared || [];
+      const failures = result.failures || [];
+      if (window.currentChatPeer && cleared.includes(window.currentChatPeer.id)) {
         performCloseChatUI();
       }
       await refreshPeerListNow();
-      showMessageActionToast(`已清除 ${removed.length} 台离线设备`);
+      if (failures.length) {
+        // 部分失败必须如实提示：失败设备的记录与档案已保留，可重试。
+        showMessageActionToast(
+          `已清除 ${cleared.length} 台；${failures.length} 台因本机文件删除失败已保留（可重试）`,
+          5000,
+        );
+      } else {
+        showMessageActionToast(`已清除 ${cleared.length} 台离线设备及其聊天记录`);
+      }
     },
   );
 }
 window.clearOfflinePeerDevices = clearOfflinePeerDevices;
 
 // ==========================================
+// 1.5 清除聊天数据（聊天右上角与设备管理菜单共用同一文案与流程）
+// ==========================================
+const CLEAR_CHAT_CONFIRM_DETAIL =
+  "将删除当前聊天的全部记录，以及本机保存的对应附件、接收文件和 APK 副本。" +
+  "其他聊天、您选择发送的原始文件与已安装应用都不会被删除。";
+
+function chatFileCleanupWarning(report) {
+  const failures = Array.isArray(report?.failures) ? report.failures : [];
+  if (!failures.length) return "";
+  const reason = failures[0]?.reason ? `（${failures[0].reason}）` : "";
+  return `记录已清除，但有 ${failures.length} 个本机文件删除失败${reason}，请在系统文件管理器中手动清理`;
+}
+
+function applyClearedChatUI(peerId) {
+  if (!window.currentChatPeer || window.currentChatPeer.id !== peerId) return;
+  const box = document.getElementById("chat-messages");
+  const session = chatRenderController.begin(peerId);
+  if (box) {
+    box.replaceChildren();
+    chatRenderController.ensureBottomAnchor(box);
+  }
+  window.currentChatMessages = {
+    peerId,
+    sessionId: session.sessionId,
+    loadedCount: 0,
+    totalCount: 0,
+    hasMore: false,
+    isLoading: false,
+  };
+  window.lastMessageTimestamp = 0;
+  const btn = document.getElementById("scroll-to-bottom-btn");
+  if (btn) btn.classList.remove("show");
+}
+
+function chatCleanupAbortMessage(report, action) {
+  const failures = Array.isArray(report?.failures) ? report.failures : [];
+  const reason = failures[0]?.reason ? `（${failures[0].reason}）` : "";
+  return `${action}失败：${failures.length} 个本机文件无法删除${reason}，聊天记录与本机数据已保留，可重试`;
+}
+
+function confirmClearChatData(peerId, userName, afterClear) {
+  const name = (userName || "").trim() || "该设备";
+  showConfirm(
+    `确定要清除与"${name}"的聊天数据吗？${CLEAR_CHAT_CONFIRM_DETAIL}`,
+    async () => {
+      const report = await apiClearChatHistory(peerId);
+      // 有文件删不掉时后端会中止删除记录：此时必须如实报错并保留可重试的入口。
+      if (report && report.aborted) {
+        showMessageActionToast(chatCleanupAbortMessage(report, "清除"), 8000);
+        return;
+      }
+      applyClearedChatUI(peerId);
+      const warning = chatFileCleanupWarning(report);
+      showMessageActionToast(warning || "已清除聊天数据", warning ? 7000 : 1800);
+      afterClear?.();
+    },
+  );
+}
+
+function initClearChatDataButton() {
+  const button = document.getElementById("clear-chat-data-btn");
+  if (!button) return;
+  button.addEventListener("click", () => {
+    const peer = window.currentChatPeer;
+    if (!peer) return;
+    if (window.selectMode?.active) exitSelectMode();
+    const title = document.getElementById("chat-with-name")?.textContent || peer.name;
+    confirmClearChatData(peer.id, title);
+  });
+}
+
+// ==========================================
 // 2. 完整的用户管理弹窗函数
 // ==========================================
+
 async function showUserActionDialog(peerId, userName) {
   // 1. 判断是否离线(通过检查左侧列表中是否有 offline 灰显类名)
   const userLi = document.querySelector(`#user-list li[data-id="${peerId}"]`);
@@ -5055,7 +5369,7 @@ async function showUserActionDialog(peerId, userName) {
   // 只要有历史记录,就允许清空
   if (hasHistory) {
     buttonsHtml +=
-      `<button id="mgmt-clear-btn" class="mgmt-action-btn btn-grad-warning">清空聊天记录</button>`;
+      `<button id="mgmt-clear-btn" class="mgmt-action-btn btn-grad-warning">清除聊天数据</button>`;
   }
 
   buttonsHtml +=
@@ -5081,13 +5395,20 @@ async function showUserActionDialog(peerId, userName) {
   if (delBtn) {
     delBtn.onclick = () => {
       showConfirm(
-        `确定要彻底删除离线用户 "${userName}" 吗?此操作不可恢复。`,
+        `确定要彻底删除设备 "${userName}" 吗？将同时清除本机保存的该设备聊天记录、附件与接收文件；` +
+          "其他设备的数据不受影响，您的原始文件与已安装应用不会被删除。此操作不可恢复。",
         async () => {
+          const report = await apiDeleteUserComplete(peerId);
+          // 文件删不掉时后端会中止删除设备：保留设备与记录，便于重试。
+          if (report && report.aborted) {
+            showMessageActionToast(chatCleanupAbortMessage(report, "删除设备"), 8000);
+            return;
+          }
           if (window.currentChatPeer && window.currentChatPeer.id === peerId) {
             performCloseChatUI();
           }
-
-          await apiDeleteUserComplete(peerId);
+          const warning = chatFileCleanupWarning(report);
+          if (warning) showMessageActionToast(warning, 7000);
 
           const el = document.querySelector(
             `#user-list li[data-id="${peerId}"]`,
@@ -5102,35 +5423,11 @@ async function showUserActionDialog(peerId, userName) {
     };
   }
 
-  // --- 绑定清空记录逻辑---
+  // --- 绑定清除聊天数据逻辑（与聊天右上角同一套文案与流程）---
   const clearBtn = document.getElementById("mgmt-clear-btn");
   if (clearBtn) {
     clearBtn.onclick = () => {
-      showConfirm(`确定要清空与 "${userName}" 的所有聊天记录吗?`, async () => {
-        await apiClearChatHistory(peerId);
-
-        if (window.currentChatPeer && window.currentChatPeer.id === peerId) {
-          const box = document.getElementById("chat-messages");
-          const session = chatRenderController.begin(peerId);
-          if (box) {
-            box.replaceChildren();
-            chatRenderController.ensureBottomAnchor(box);
-          }
-          window.currentChatMessages = {
-            peerId,
-            sessionId: session.sessionId,
-            loadedCount: 0,
-            totalCount: 0,
-            hasMore: false,
-            isLoading: false,
-          };
-          window.lastMessageTimestamp = 0;
-          // 清空后隐藏滚动按钮
-          const btn = document.getElementById("scroll-to-bottom-btn");
-          if (btn) btn.classList.remove("show");
-        }
-        closeMgmt();
-      });
+      confirmClearChatData(peerId, userName, closeMgmt);
     };
   }
 }

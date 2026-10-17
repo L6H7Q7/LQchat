@@ -15,6 +15,12 @@ pub struct Message {
     pub sender_msg_id: Option<String>,
     #[sqlx(default)]
     pub status: Option<String>,
+    /// 与图片/文件合并发送的文字说明。
+    #[sqlx(default)]
+    pub caption: Option<String>,
+    /// 发送成功后由应用清理本机副本的标记。
+    #[sqlx(default)]
+    pub local_copy_cleaned: Option<i64>,
 }
 
 // API 响应用的消息结构体（字段名适配前端）
@@ -39,6 +45,12 @@ pub struct MessageResponse {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender_msg_id: Option<i64>,
+    /// 图片/文件消息气泡内的文字说明（图片在上、空一行、文字在下）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// 仅当传输成功且应用确实清理了本机副本时为 true。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_copy_cleaned: Option<bool>,
 }
 
 impl From<Message> for MessageResponse {
@@ -56,6 +68,13 @@ impl From<Message> for MessageResponse {
             file_size: None,
             sender_msg_id: None,
             status: msg.status.clone(),
+            caption: msg
+                .caption
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string()),
+            local_copy_cleaned: msg.local_copy_cleaned.map(|value| value != 0),
         };
 
         // 如果是文件消息，添加文件信息

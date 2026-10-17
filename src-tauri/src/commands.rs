@@ -77,6 +77,7 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
     mut file: R,
     is_online: bool,
     pre_saved_msg_id: Option<i64>, // 消息已提前保存时传入（如 Android FD 缓存场景），不再新建
+    caption: Option<String>,       // 图片+文字合并发送时的文字说明
 ) -> Result<serde_json::Value, String> {
     if !is_online {
         return Err("对方不在线".to_string());
@@ -101,6 +102,11 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
     };
 
     if let Some(id) = message_id {
+        if let Some(text) = caption.as_deref() {
+            if !text.is_empty() {
+                let _ = crate::db::set_message_caption(&state.pool, id, text).await;
+            }
+        }
         let _ = app.emit("file_upload_started", serde_json::json!({
             "sender_msg_id": id, "peer_id": peer_id,
         }));
@@ -180,6 +186,7 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
             .text("chunk_total", total_chunks.to_string())
             .text("sender_msg_id", sender_msg_id_str)
             .text("speed_mb_s", format!("{:.1}", speed_mb_s))
+            .text("caption", caption.clone().unwrap_or_default())
             .part(
                 "chunk",
                 reqwest::multipart::Part::bytes(buf.clone())
@@ -234,6 +241,7 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
                 if let Some(id) = message_id {
                     let _ = crate::db::update_file_status_by_id(&state.pool, id, "sent").await;
                 }
+                cleanup_sent_local_copy(app, state, message_id, &file_path_for_db).await;
                 return Ok(serde_json::json!({
                     "success": true,
                     "file_name": file_name,
@@ -296,12 +304,42 @@ async fn upload_file_internal<R: tokio::io::AsyncRead + Unpin>(
             println!("[Command] ✓ 文件状态已更新为 sent");
         }
     }
+    cleanup_sent_local_copy(app, state, message_id, &file_path_for_db).await;
 
     Ok(serde_json::json!({
         "success": true,
         "file_name": file_name,
         "file_size": file_size,
     }))
+}
+
+/// 传输确认成功后清理应用自己创建的本机副本（outbox），并记录以便文件卡片显示
+/// “发送成功，本机对应文件已删除”。用户原始文件与已安装应用的文件永远不会删除。
+async fn cleanup_sent_local_copy(
+    app: &tauri::AppHandle,
+    state: &State<'_, DbState>,
+    message_id: Option<i64>,
+    file_path_for_db: &str,
+) {
+    if file_path_for_db.is_empty() || file_path_for_db.starts_with("fd:") {
+        return;
+    }
+    let Ok(app_data) = app.path().app_data_dir() else {
+        return;
+    };
+    let candidate = std::path::Path::new(file_path_for_db);
+    if !crate::storage_ops::path_within(candidate, &app_data.join("outbox")) || !candidate.is_file() {
+        return;
+    }
+    match tokio::fs::remove_file(candidate).await {
+        Ok(()) => {
+            if let Some(id) = message_id {
+                let _ = crate::db::mark_local_copy_cleaned(&state.pool, id).await;
+            }
+            println!("[Command] ✓ 已清理发送完成的本机副本: {}", file_path_for_db);
+        }
+        Err(error) => eprintln!("[Command] 清理本机副本失败: {error}"),
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -567,6 +605,10 @@ pub async fn send_file(
     peer_id: String,
     mut peer_addr: String,
     file_path: String,
+    // 显式发送文件名（例如选取已安装应用时传入真实应用名 + .apk）。
+    file_name: Option<String>,
+    // 与图片/文件合并发送的文字，接收端保存在同一条消息里。
+    caption: Option<String>,
 ) -> Result<serde_json::Value, String> {
     println!(
         "[Command] 收到发送文件请求: {} -> {} ({})",
@@ -586,7 +628,8 @@ pub async fn send_file(
     println!("[Command] 实际文件路径: {}", actual_path);
 
     // ── 提取文件元数据（不打开文件） ──
-    let (file_name, file_size) = if actual_path.starts_with("content://") {
+    let explicit_name = file_name;
+    let (detected_name, file_size) = if actual_path.starts_with("content://") {
         #[cfg(target_os = "android")]
         {
             use crate::android_fd::AndroidFile;
@@ -627,6 +670,39 @@ pub async fn send_file(
         let metadata =
             std::fs::metadata(&actual_path).map_err(|e| format!("读取文件信息失败: {}", e))?;
         (name, metadata.len() as usize)
+    };
+
+    // 应用选择器发送 APK 时使用真实应用名称，避免所有安装包都叫 base.apk。
+    let file_name = explicit_name
+        .as_deref()
+        .and_then(crate::storage_ops::sanitize_file_name)
+        .unwrap_or(detected_name);
+    let caption = caption
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+
+    // 选中已安装应用发送时，先把 APK 复制到应用管理的 outbox：
+    // 1) 发送过程中应用升级/卸载不会改变内容；2) 传输确认成功后再释放这份本机副本，
+    //    文件卡片因此可以显示“发送成功，本机对应文件已删除”。
+    #[cfg(target_os = "android")]
+    let (actual_path, file_size) = if explicit_name.is_some() && !actual_path.starts_with("content://") {
+        match std::fs::File::open(&actual_path) {
+            Ok(source) => match persist_android_fd(&app, source, &file_name).await {
+                Ok((copied_path, copied_size)) => (copied_path, copied_size),
+                Err(error) => {
+                    eprintln!("[Command] 复制应用安装包失败，改用原文件发送: {error}");
+                    (actual_path, file_size)
+                }
+            },
+            Err(error) => {
+                eprintln!("[Command] 打开应用安装包失败，改用原文件发送: {error}");
+                (actual_path, file_size)
+            }
+        }
+    } else {
+        (actual_path, file_size)
     };
 
     println!("[Command] 文件: {}, 大小: {} 字节", file_name, file_size);
@@ -773,6 +849,7 @@ pub async fn send_file(
             "file_name": file_name,
             "file_size": file_size,
             "sender_msg_id": sender_msg_id,
+            "caption": caption.clone().unwrap_or_default(),
         });
         let _ = crate::network::messaging::send_json_via_ws(&peer_addr, &offer.to_string()).await;
 
@@ -826,6 +903,7 @@ pub async fn send_file(
                 file,
                 is_online,
                 None,
+                caption,
             )
             .await;
         }
@@ -876,6 +954,7 @@ pub async fn send_file(
         file,
         is_online,
         None,
+        caption,
     )
     .await
 }
@@ -1480,6 +1559,7 @@ pub async fn send_file_from_fd(
             file,
             is_online,
             Some(msg_id),
+            None,
         )
         .await
     }
@@ -1814,35 +1894,81 @@ pub async fn delete_messages(
     crate::db::delete_messages_by_ids(&state.pool, msg_ids).await
 }
 
+/// 清除当前聊天的全部记录及对应的本机文件（只处理应用管理的附件/接收文件/APK 副本）。
+/// 返回清理报告；有文件删除失败时由前端明确提示，不谎报成功。
 #[tauri::command]
 pub async fn clear_chat_history(
     state: tauri::State<'_, crate::db::DbState>,
     peer_id: String,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let my_id = crate::db::get_user_id(&state.pool).await?;
-    crate::db::clear_chat_history(&state.pool, &my_id, &peer_id).await
+    let outcome = crate::storage_ops::cleanup_peer_chat_files(&state.pool, &my_id, &peer_id).await?;
+    let mut value = serde_json::to_value(&outcome.report).map_err(|error| error.to_string())?;
+    if outcome.report.failed() {
+        // 有文件删不掉时保留聊天记录：否则失败文件会失去引用，也失去重试入口。
+        value["aborted"] = serde_json::Value::Bool(true);
+        return Ok(value);
+    }
+    crate::db::clear_chat_history(&state.pool, &my_id, &peer_id).await?;
+    crate::storage_ops::finalize_cleanup(&state.pool, &outcome).await;
+    value["aborted"] = serde_json::Value::Bool(false);
+    Ok(value)
 }
 
+/// 删除设备时一并清除该设备的聊天记录与本机文件，其他设备数据与发送源文件保留。
 #[tauri::command]
 pub async fn delete_user_complete(
     state: tauri::State<'_, crate::db::DbState>,
     peer_state: tauri::State<'_, PeerState>, // 必须引入这个来操作内存
     peer_id: String,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let my_id = crate::db::get_user_id(&state.pool).await?;
+    let outcome = crate::storage_ops::cleanup_peer_chat_files(&state.pool, &my_id, &peer_id).await?;
+    let mut value = serde_json::to_value(&outcome.report).map_err(|error| error.to_string())?;
+    if outcome.report.failed() {
+        value["aborted"] = serde_json::Value::Bool(true);
+        return Ok(value);
+    }
 
     peer_state
         .active_manager()
         .delete_user_and_history(&state.pool, &my_id, &peer_id)
-        .await
+        .await?;
+    crate::storage_ops::finalize_cleanup(&state.pool, &outcome).await;
+
+    value["aborted"] = serde_json::Value::Bool(false);
+    Ok(value)
 }
 
+/// 立刻把当前已保存的文件移动到设置里的下载位置。
+#[tauri::command]
+pub async fn migrate_saved_files(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<serde_json::Value, String> {
+    let download = crate::db::get_download_path(&state.pool).await?;
+    let receive = crate::db::get_receive_directory(&state.pool).await.ok().map(std::path::PathBuf::from);
+    let app_data = crate::storage_ops::current_app_data_dir();
+    let report = crate::storage_ops::migrate_saved_files(
+        &state.pool,
+        app_data.as_deref(),
+        receive.as_deref(),
+        &download,
+    )
+    .await;
+    serde_json::to_value(&report).map_err(|error| error.to_string())
+}
+
+/// 清除离线设备：与单设备删除同一安全语义（先清本机管理的文件，再删记录与档案）。
 #[tauri::command]
 pub async fn clear_offline_peers(
     state: tauri::State<'_, crate::db::DbState>,
     peer_state: tauri::State<'_, PeerState>,
-) -> Result<Vec<String>, String> {
-    peer_state.active_manager().clear_offline_peer_profiles(&state.pool).await
+) -> Result<serde_json::Value, String> {
+    let my_id = crate::db::get_user_id(&state.pool).await?;
+    peer_state
+        .active_manager()
+        .clear_offline_with_history(&state.pool, &my_id)
+        .await
 }
 
 // ── 自定义 IP 命令 ──

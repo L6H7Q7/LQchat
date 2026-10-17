@@ -732,6 +732,24 @@ class MainActivity : TauriActivity() {
             .build()
     }
 
+    /**
+     * 应用自己创建的 outbox 发送副本（app data/outbox）。
+     * FileProvider 的 file_paths.xml 只覆盖 files/cache/external，而 applicationId 在验收构建
+     * （com.lanchat.app.acceptance）中会变化，写死包名的 root-path 会失效；因此改用运行时
+     * dataDir 解析、只暴露 outbox 目录自身的 FdContentProvider 映射（只读、按文件名、防穿越）。
+     */
+    private fun outboxFileUri(file: File): Uri? {
+        val outboxRoot = File(applicationInfo.dataDir, "outbox").canonicalFile
+        val canonicalFile = file.canonicalFile
+        if (canonicalFile.parentFile != outboxRoot) return null
+        return Uri.Builder()
+            .scheme("content")
+            .authority("$packageName.fdprovider")
+            .appendPath("outbox")
+            .appendPath(canonicalFile.name)
+            .build()
+    }
+
     private fun resolveExternalFile(filePath: String): ExternalFile {
         val uri = if (filePath.startsWith("content://")) {
             Uri.parse(filePath)
@@ -739,6 +757,7 @@ class MainActivity : TauriActivity() {
             val file = File(filePath).canonicalFile
             require(file.isFile) { "文件不存在或不可读取: $filePath" }
             storedReceivedFileUri(file)
+                ?: outboxFileUri(file)
                 ?: FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         }
 

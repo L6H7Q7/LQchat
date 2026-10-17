@@ -5,7 +5,9 @@ async function renderPage() {
   const androidPreview = new URLSearchParams(location.search).get("android-preview") === "1";
   const desktopPreview = new URLSearchParams(location.search).get("desktop-preview") === "1";
   const previewMode = androidPreview || desktopPreview;
-  const androidApp = (navigator.userAgent.includes("Android") && !!window.__TAURI__) || androidPreview;
+  // 与 js/shell.js 的首绘前判定保持一致：Android UA 即 Android 外壳，
+  // 避免这里再 toggle 掉首绘前已加上的外壳类造成布局二次跳变。
+  const androidApp = navigator.userAgent.includes("Android") || androidPreview;
   document.body.classList.toggle("android-app", androidApp);
   document.body.classList.toggle("windows-app", !androidApp &&
     (desktopPreview || (!!window.__TAURI__ && navigator.userAgent.includes("Windows"))));

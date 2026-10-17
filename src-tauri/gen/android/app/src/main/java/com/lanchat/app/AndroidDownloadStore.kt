@@ -58,4 +58,21 @@ object AndroidDownloadStore {
             "ERROR:${error.message ?: error.javaClass.simpleName}"
         }
     }
+
+    /**
+     * 删除本应用导出到用户所选文件夹中的文件（清除聊天数据、迁移后清理旧副本）。
+     * 只应在确认该文档确实由 LANChat 创建时调用。
+     */
+    @JvmStatic
+    @Keep
+    fun deleteExportedFile(uri: String): String {
+        return try {
+            val context = appContext ?: return "ERROR:Android 文件存储尚未初始化"
+            val target = Uri.parse(uri)
+            val deleted = DocumentsContract.deleteDocument(context.contentResolver, target)
+            if (deleted) "OK" else "ERROR:系统未删除该文件"
+        } catch (error: Exception) {
+            "ERROR:${error.message ?: error.javaClass.simpleName}"
+        }
+    }
 }

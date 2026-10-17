@@ -746,15 +746,14 @@ impl AndroidFile {
     }
 }
 
-/// 将应用专属目录中已经完整接收的文件导出到用户通过 SAF 选择的目录。
-/// Kotlin 侧负责 DocumentsContract/ContentResolver 操作，Rust 侧只传递稳定的字符串参数。
+/// 通过应用 ClassLoader 调用 Kotlin 的 AndroidDownloadStore。
+///
+/// FindClass 在由 Rust/Tokio 附加的原生线程上只使用系统 ClassLoader，无法找到
+/// 应用 Kotlin 类，因此必须先从 Android Context 取到应用 ClassLoader。
 #[cfg(target_os = "android")]
-pub fn export_received_file(
-    tree_uri: &str,
-    source_path: &str,
-    file_name: &str,
-) -> Result<String, String> {
+fn call_download_store(method: &str, signature: &str, args: &[&str]) -> Result<String, String> {
     use jni::objects::{JClass, JObject, JString, JValue};
+
     let context_guard = service_context()
         .lock()
         .map_err(|_| "前台服务 Android Context 锁已损坏".to_string())?;
@@ -766,8 +765,6 @@ pub fn export_received_file(
         .attach_current_thread()
         .map_err(|error| format!("附加 JNI 线程失败: {error}"))?;
 
-    // FindClass 在由 Rust/Tokio 附加的原生线程上只使用系统 ClassLoader，
-    // 无法找到应用 Kotlin 类。必须从 Android Context 取得应用 ClassLoader。
     let class_loader = env
         .call_method(
             service_context.context.as_obj(),
@@ -789,64 +786,109 @@ pub fn export_received_file(
     ) {
         Ok(value) => value
             .l()
-            .map_err(|error| format!("读取 Kotlin 导出类失败: {error}"))?,
+            .map_err(|error| format!("读取 Kotlin 文件操作类失败: {error}"))?,
         Err(error) => {
             if env.exception_check().unwrap_or(false) {
                 let _ = env.exception_describe();
                 let _ = env.exception_clear();
             }
-            return Err(format!("加载 Kotlin 文件导出类失败: {error}"));
+            return Err(format!("加载 Kotlin 文件操作类失败: {error}"));
         }
     };
     let download_store_class = JClass::from(loaded_class);
 
-    let tree_uri = env
-        .new_string(tree_uri)
-        .map_err(|error| format!("创建目录 URI 参数失败: {error}"))?;
-    let source_path = env
-        .new_string(source_path)
-        .map_err(|error| format!("创建源路径参数失败: {error}"))?;
-    let file_name = env
-        .new_string(file_name)
-        .map_err(|error| format!("创建文件名参数失败: {error}"))?;
+    let arguments = args
+        .iter()
+        .map(|value| env.new_string(value).map(JObject::from))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("创建 Kotlin 参数失败: {error}"))?;
+    let values = arguments
+        .iter()
+        .map(JValue::Object)
+        .collect::<Vec<JValue>>();
 
-    let result_value = match env.call_static_method(
-        &download_store_class,
-        "exportReceivedFile",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-        &[
-            JValue::Object(&JObject::from(tree_uri)),
-            JValue::Object(&JObject::from(source_path)),
-            JValue::Object(&JObject::from(file_name)),
-        ],
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            if env.exception_check().unwrap_or(false) {
-                let _ = env.exception_describe();
-                let _ = env.exception_clear();
+    let result_value =
+        match env.call_static_method(&download_store_class, method, signature, &values) {
+            Ok(value) => value,
+            Err(error) => {
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_describe();
+                    let _ = env.exception_clear();
+                }
+                return Err(format!("调用 Android 文件操作失败: {error}"));
             }
-            return Err(format!("调用 Android 文件导出失败: {error}"));
-        }
-    };
+        };
     let result = result_value
         .l()
-        .map_err(|error| format!("读取 Android 文件导出结果失败: {error}"))?;
+        .map_err(|error| format!("读取 Android 文件操作结果失败: {error}"))?;
 
     if result.is_null() {
-        return Err("Android 文件导出未返回结果".to_string());
+        return Err("Android 文件操作未返回结果".to_string());
     }
 
     let result = JString::from(result);
     let value: String = env
         .get_string(&result)
-        .map_err(|error| format!("解析 Android 文件导出结果失败: {error}"))?
+        .map_err(|error| format!("解析 Android 文件操作结果失败: {error}"))?
         .into();
     if let Some(message) = value.strip_prefix("ERROR:") {
         Err(message.to_string())
     } else {
         Ok(value)
     }
+}
+
+/// 将应用专属目录中已经完整接收的文件导出到用户通过 SAF 选择的目录。
+/// Kotlin 侧负责 DocumentsContract/ContentResolver 操作，Rust 侧只传递稳定的字符串参数。
+#[cfg(target_os = "android")]
+pub fn export_received_file(
+    tree_uri: &str,
+    source_path: &str,
+    file_name: &str,
+) -> Result<String, String> {
+    call_download_store(
+        "exportReceivedFile",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        &[tree_uri, source_path, file_name],
+    )
+}
+
+/// 删除导出到用户所选文件夹（SAF）里的文件；只用于清理聊天数据与迁移后的旧副本。
+#[cfg(target_os = "android")]
+pub fn delete_exported_file(uri: &str) -> Result<(), String> {
+    call_download_store(
+        "deleteExportedFile",
+        "(Ljava/lang/String;)Ljava/lang/String;",
+        &[uri],
+    )
+    .map(|_| ())
+}
+
+/// 把 content:// 文件读到应用专属暂存路径，供迁移前校验目标完整性。
+#[cfg(target_os = "android")]
+pub fn copy_content_uri_to_file(uri: &str, destination: &std::path::Path) -> Result<u64, String> {
+    use std::io::{Read, Write};
+    let mut source = AndroidFile::from_content_uri(uri)?.into_file();
+    let mut target = std::fs::File::create(destination)
+        .map_err(|error| format!("创建临时文件失败: {error}"))?;
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut copied: u64 = 0;
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| format!("读取系统文件失败: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        target
+            .write_all(&buffer[..read])
+            .map_err(|error| format!("写入临时文件失败: {error}"))?;
+        copied += read as u64;
+    }
+    target
+        .flush()
+        .map_err(|error| format!("写入临时文件失败: {error}"))?;
+    Ok(copied)
 }
 
 /// JNI 导出：供 Kotlin 在选完文件并提取持久化权限后回调

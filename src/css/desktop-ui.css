@@ -224,3 +224,187 @@ body.windows-app .confirm-btn-cancel { background: var(--desktop-bg); border-col
 @media (prefers-reduced-motion: reduce) {
   body.windows-app *, body.windows-app *::before, body.windows-app *::after { animation: none !important; transition: none !important; }
 }
+
+/* ===== 消息外观与气泡外元信息（Windows）与 Android 19.31 对齐 ===== */
+body.windows-app {
+	--msg-sent-bg: #ffffff;
+	--msg-sent-ink: #23242e;
+	--msg-sent-muted: rgba(35, 36, 46, 0.56);
+	--msg-sent-border: rgba(28, 28, 52, 0.1);
+	--msg-sent-shadow: 0 1px 3px rgba(30, 30, 60, 0.08);
+	--msg-received-bg: #2b2f3f;
+	--msg-received-ink: #eef0f8;
+	--msg-received-muted: rgba(238, 240, 248, 0.62);
+	--msg-received-border: rgba(255, 255, 255, 0.1);
+	--msg-card-radius: 14px;
+	--msg-danger: #b03a4a;
+	--msg-meta-time: #676c7d;
+	--msg-meta-path: #17835c;
+}
+
+body.windows-app .message.sent .message-content {
+	background: var(--msg-sent-bg);
+	color: var(--msg-sent-ink);
+	border: 1px solid var(--msg-sent-border);
+	box-shadow: var(--msg-sent-shadow);
+}
+
+body.windows-app .message.received .message-content {
+	background: var(--msg-received-bg);
+	color: var(--msg-received-ink);
+	border: 1px solid var(--msg-received-border);
+	box-shadow: none;
+}
+
+body.windows-app .message-file-only .message-content {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+body.windows-app .message.sent .message-file:not(:has(.image-preview)) {
+	background: var(--msg-sent-bg);
+	border: 1px solid var(--msg-sent-border);
+	box-shadow: var(--msg-sent-shadow);
+}
+
+body.windows-app .message.received .message-file:not(:has(.image-preview)) {
+	background: var(--msg-received-bg);
+	border: 1px solid var(--msg-received-border);
+	box-shadow: none;
+}
+
+body.windows-app .message.sent .file-name { color: var(--msg-sent-ink); }
+body.windows-app .message.sent .file-size { color: var(--msg-sent-muted); }
+body.windows-app .message.received .file-name { color: var(--msg-received-ink); }
+body.windows-app .message.received .file-size { color: var(--msg-received-muted); }
+
+body.windows-app .message-image-msg .message-content:not(:has(.message-caption)) {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+body.windows-app .message-image-msg .message-content:has(.message-caption) {
+	padding: 8px;
+	border-radius: var(--msg-card-radius);
+}
+
+body.windows-app .message-image-msg .message-file {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+body.windows-app .message-image-msg .image-preview {
+	width: auto;
+	height: auto;
+	max-width: min(420px, 60vw);
+	max-height: 420px;
+	aspect-ratio: auto;
+	margin: 0;
+	background: transparent;
+}
+
+body.windows-app .message-image-msg .image-preview img {
+	width: auto;
+	height: auto;
+	max-width: 100%;
+	max-height: 420px;
+	aspect-ratio: auto;
+	object-fit: contain;
+	background: transparent;
+	display: block;
+}
+
+body.windows-app .message-meta {
+	box-sizing: border-box;
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 8px;
+	width: min(100%, 640px);
+	max-width: 640px;
+	margin-top: 4px;
+	overflow: hidden;
+	color: var(--msg-meta-path);
+}
+
+body.windows-app .message.sent .message-meta { justify-content: flex-end; }
+
+body.windows-app .message-meta .message-meta-time,
+body.windows-app .message-meta .message-meta-time .message-time {
+	flex: 0 0 auto;
+	margin: 0;
+	white-space: nowrap;
+	text-align: right;
+	color: inherit;
+	font-size: 10px;
+	line-height: 16px;
+	opacity: 1;
+}
+
+body.windows-app .message-meta .file-transfer-status {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+	height: 16px;
+	min-height: 16px;
+	max-height: 16px;
+	display: flex;
+	align-items: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	color: var(--msg-danger);
+}
+
+body.windows-app .message-meta .file-transfer-status:empty { display: none; }
+
+body.windows-app .message-meta .file-save-state.file-save-outside {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: none;
+	margin: 0;
+	display: block;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	-webkit-line-clamp: unset;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--msg-meta-path);
+}
+
+body.windows-app .message-meta .file-save-state.file-save-outside.deleted,
+body.windows-app .message-meta .file-save-state.file-save-outside.inaccessible,
+body.windows-app .message-meta .file-save-state.file-save-outside.action-error,
+body.windows-app .message-meta .file-save-state.file-save-outside.save-failed { color: var(--msg-danger); }
+
+body.windows-app .message-meta.meta-error,
+body.windows-app .message-meta:has(.file-transfer-status:not(:empty)),
+body.windows-app .message-meta:has(.file-save-state.deleted),
+body.windows-app .message-meta:has(.file-save-state.inaccessible),
+body.windows-app .message-meta:has(.file-save-state.action-error),
+body.windows-app .message-meta:has(.file-save-state.save-failed) { color: var(--msg-danger); }
+
+body.windows-app .message-meta.meta-error .file-save-state { display: none; }
+
+body.windows-app .message-file-only .file-transfer-status:empty,
+body.windows-app .message-image-msg .file-transfer-status:empty { display: none; }
+
+body.windows-app .message-file-only .file-transfer-progress:not(.is-active),
+body.windows-app .message-image-msg .file-transfer-progress:not(.is-active) { display: none; }
+
+body.windows-app .message-file-only .file-transfer-progress,
+body.windows-app .message-image-msg .file-transfer-progress { width: 260px; margin-top: 6px; }
+
+body.windows-app .message-file-only .file-transfer-bar,
+body.windows-app .message-image-msg .file-transfer-bar { height: 3px; }
+
+body.windows-app .message .message-meta .file-transfer-status:not(:empty) { color: var(--msg-danger); }

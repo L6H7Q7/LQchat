@@ -339,8 +339,10 @@ function calculateOptimalChunkSize(_fileSize) {
   return 10 * 1024 * 1024;
 }
 
-async function apiSendFile(peerId, peerAddr, file, filePath) {
+async function apiSendFile(peerId, peerAddr, file, filePath, options = {}) {
   const tauri = getTauri();
+  const fileNameOverride = options?.fileName;
+  const caption = options?.caption;
 
   if (tauri) {
     // 桌面端/移动端 - 使用 Tauri 对话框选择文件或使用提供的路径
@@ -403,6 +405,8 @@ async function apiSendFile(peerId, peerAddr, file, filePath) {
           peerId,
           peerAddr,
           filePath: selectedPath,
+          fileName: fileNameOverride || null,
+          caption: caption || null,
         });
         console.log("[JS-API] 文件发送成功:", result);
 
@@ -932,13 +936,23 @@ async function apiDeleteUserComplete(peerId) {
   }
 }
 
+async function apiMigrateSavedFiles() {
+  const tauri = getTauri();
+  if (!tauri) throw new Error("该操作仅在已安装的应用中可用");
+  return await tauri.core.invoke("migrate_saved_files");
+}
+
 async function apiClearOfflinePeers() {
   const tauri = getTauri();
   if (tauri) return await tauri.core.invoke("clear_offline_peers");
   const response = await fetch("/api/clear_offline_peers", { method: "POST" });
   if (!response.ok) throw new Error(`清除设备失败：HTTP ${response.status}`);
   const result = await response.json();
-  return result.removed || [];
+  return {
+    cleared: result.cleared || result.removed || [],
+    failures: result.failures || [],
+    aborted: !!result.aborted,
+  };
 }
 
 async function apiGetCustomPeers() {
