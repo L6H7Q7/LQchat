@@ -31,6 +31,9 @@ Thumbs.db
 
 # Build artifacts
 dist-custom/
+# 本地验证/打包产物与 Android 生成资产（不入库，避免数百 MB 的 APK/ZIP）
+artifacts/
+src-tauri/gen/android/app/src/main/assets/
 *.apk
 *.idsig
 *.exe

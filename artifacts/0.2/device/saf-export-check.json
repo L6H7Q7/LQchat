@@ -1,6 +1,0 @@
-{
-  "bytes": 1048576,
-  "expected": "ee78cd29d3a534713b36e6ff6fa3668c8a8f851a542d5eb2401c25ca4e057d02",
-  "actual": "ee78cd29d3a534713b36e6ff6fa3668c8a8f851a542d5eb2401c25ca4e057d02",
-  "passed": true
-}

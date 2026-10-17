@@ -240,6 +240,8 @@ body.windows-app {
 	--msg-danger: #b03a4a;
 	--msg-meta-time: #676c7d;
 	--msg-meta-path: #17835c;
+	/* 气泡外元信息行的方向色：默认（发送）= 清晰灰，接收 = 清晰绿，异常 = 清晰红。 */
+	--msg-meta-row: var(--msg-meta-time);
 }
 
 body.windows-app .message.sent .message-content {
@@ -327,19 +329,28 @@ body.windows-app .message-meta {
 	flex-wrap: nowrap;
 	align-items: center;
 	gap: 8px;
-	width: min(100%, 640px);
-	max-width: 640px;
+	width: 100%;
+	max-width: none;
 	margin-top: 4px;
 	overflow: hidden;
-	color: var(--msg-meta-path);
+	/* 元信息行独立于气泡方向：整行铺满聊天宽度，信息贴左、时间贴右。 */
+	align-self: stretch;
+	justify-content: flex-start;
+	/* 方向色：默认（发送）清晰灰，接收清晰绿；错误状态由下方规则覆盖为红。 */
+	color: var(--msg-meta-row);
 }
 
-body.windows-app .message.sent .message-meta { justify-content: flex-end; }
+/* 接收方向：左侧目录与右侧时间统一使用同一种清晰绿色。 */
+body.windows-app .message.received .message-meta {
+	--msg-meta-row: var(--msg-meta-path);
+}
 
 body.windows-app .message-meta .message-meta-time,
 body.windows-app .message-meta .message-meta-time .message-time {
 	flex: 0 0 auto;
 	margin: 0;
+	/* 时间固定贴右：把剩余空间全部推到时间左侧。 */
+	margin-left: auto;
 	white-space: nowrap;
 	text-align: right;
 	color: inherit;
@@ -378,7 +389,8 @@ body.windows-app .message-meta .file-save-state.file-save-outside {
 	-webkit-line-clamp: unset;
 	font-size: 11px;
 	line-height: 16px;
-	color: var(--msg-meta-path);
+	/* 跟随行颜色：发送灰、接收绿、错误红。 */
+	color: inherit;
 }
 
 body.windows-app .message-meta .file-save-state.file-save-outside.deleted,
@@ -386,12 +398,15 @@ body.windows-app .message-meta .file-save-state.file-save-outside.inaccessible,
 body.windows-app .message-meta .file-save-state.file-save-outside.action-error,
 body.windows-app .message-meta .file-save-state.file-save-outside.save-failed { color: var(--msg-danger); }
 
-body.windows-app .message-meta.meta-error,
-body.windows-app .message-meta:has(.file-transfer-status:not(:empty)),
-body.windows-app .message-meta:has(.file-save-state.deleted),
-body.windows-app .message-meta:has(.file-save-state.inaccessible),
-body.windows-app .message-meta:has(.file-save-state.action-error),
-body.windows-app .message-meta:has(.file-save-state.save-failed) { color: var(--msg-danger); }
+/* 出错状态：不分发送/接收，左侧错误信息与右侧时间统一红色；错误优先于方向。 */
+body.windows-app .message .message-meta.meta-error,
+body.windows-app .message .message-meta:has(.file-transfer-status:not(:empty)),
+body.windows-app .message .message-meta:has(.file-save-state.deleted),
+body.windows-app .message .message-meta:has(.file-save-state.inaccessible),
+body.windows-app .message .message-meta:has(.file-save-state.action-error),
+body.windows-app .message .message-meta:has(.file-save-state.save-failed) {
+	--msg-meta-row: var(--msg-danger);
+}
 
 body.windows-app .message-meta.meta-error .file-save-state { display: none; }
 

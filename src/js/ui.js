@@ -5217,6 +5217,13 @@ function showConfirm(message, onOk) {
 }
 
 async function clearOfflinePeerDevices() {
+  // Windows：同一个“清除”按钮统一处理聊天设备与通知设备；确认与分域报告在通知模块内完成。
+  if (
+    document.body.classList.contains("windows-app") &&
+    typeof window.NotificationUI?.clearOfflineEverywhere === "function"
+  ) {
+    return window.NotificationUI.clearOfflineEverywhere();
+  }
   const peers = await apiGetPeers();
   const offline = peers.filter(peer => peer.is_offline);
   if (!offline.length) {
@@ -5249,6 +5256,9 @@ async function clearOfflinePeerDevices() {
   );
 }
 window.clearOfflinePeerDevices = clearOfflinePeerDevices;
+// 通知设备清理沿用同一套确认弹窗与提示，避免两处交互不一致。
+window.showConfirmDialog = showConfirm;
+window.showMessageActionToast = showMessageActionToast;
 
 // ==========================================
 // 1.5 清除聊天数据（聊天右上角与设备管理菜单共用同一文案与流程）

@@ -1,8 +1,0 @@
-{
-  "native_hash": "800CAD50AF880B1ED37216D6FF9083EA4A3BE33C6B7C3EC636D8AA9D0CC6387D",
-  "apk_code": 1022,
-  "apk_version": "0.2",
-  "native_match": true,
-  "zipalign_16k": true,
-  "signature_v2_v3": true
-}

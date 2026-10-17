@@ -30,6 +30,7 @@
     "allow-set-notification-sound-enabled",
     "allow-notification-settings",
     "allow-notification-records",
+    "allow-notification-clear-offline-devices",
     "allow-notification-action",
     "allow-notification-test",
     "allow-get-background-receive-state",

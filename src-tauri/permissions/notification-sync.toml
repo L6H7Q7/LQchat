@@ -9,6 +9,16 @@ description = "Allows the local UI to read seven-day notification history"
 commands.allow = ["notification_records", "notification_record", "notification_pending_activation"]
 
 [[permission]]
+identifier = "allow-clear-offline-devices"
+description = "Allows the local UI to clean offline devices in both the chat and notification lists after one confirmation"
+commands.allow = ["clear_offline_devices"]
+
+[[permission]]
+identifier = "allow-notification-clear-offline-devices"
+description = "Allows the local UI to remove offline notification devices together with their notification records"
+commands.allow = ["notification_clear_offline_devices"]
+
+[[permission]]
 identifier = "allow-notification-action"
 description = "Allows notification application selection and system settings actions"
 commands.allow = ["notification_action"]

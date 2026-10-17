@@ -4,6 +4,7 @@ window.NotificationUI = (() => {
     android = false,
     localId = "",
     localName = "",
+    deviceNames = new Map(),
     peers = [],
     records = [],
     historyDevices = [],
@@ -97,10 +98,27 @@ window.NotificationUI = (() => {
   const invoke = (command, args = {}) =>
     window.__TAURI__.core.invoke(command, args);
   const peerFor = (id) => peers.find((p) => p.id === id);
-  const nameFor = (id) =>
-    (id === localId ? document.getElementById("my-name")?.textContent || localName : "") ||
-    peerFor(id)?.name || historyDevices.find((r) => r.peer_id === id)?.peer_name ||
-    records.find((r) => r.peer_id === id)?.peer_name || id;
+  const isOnline = (id) => id === localId || (!!peerFor(id) && !peerFor(id).is_offline);
+  // 只有真实设备名才算名字：空串和“名字就是设备 ID”的旧记录都不算。
+  const isUsableName = (value, id) =>
+    typeof value === "string" && value.trim() !== "" && value.trim() !== id;
+  const UNKNOWN_DEVICE = "未知设备";
+  const nameFor = (id) => {
+    if (id === localId) {
+      const local = (document.getElementById("my-name")?.textContent || localName || "").trim();
+      return local || "本机";
+    }
+    const candidates = [
+      peerFor(id)?.name,
+      deviceNames.get(id),
+      historyDevices.find((r) => r.peer_id === id)?.peer_name,
+      records.find((r) => r.peer_id === id)?.peer_name,
+    ];
+    const usable = candidates.find((name) => isUsableName(name, id));
+    return usable ? usable.trim() : UNKNOWN_DEVICE;
+  };
+  const named = (id) => nameFor(id) !== UNKNOWN_DEVICE;
+  const shortId = (id) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
   const pushSourcePeers = () =>
     peers.filter(
       (peer) =>
@@ -108,6 +126,14 @@ window.NotificationUI = (() => {
         Array.isArray(peer.notification_push_target_device_ids) &&
         peer.notification_push_target_device_ids.includes(localId),
     );
+  const deviceIds = () => [...new Set([
+    localId,
+    ...config.target_device_ids,
+    ...pushSourcePeers().map((peer) => peer.id),
+    ...historyDevices.map((peer) => peer.peer_id),
+    ...records.filter((r) => r.view_kind !== "notification_local").map((r) => r.peer_id),
+  ])];
+  const offlineDeviceIds = () => deviceIds().filter((id) => id !== localId && !isOnline(id));
   function recordTypeFor(id) {
     let directions = recordDirections.get(id);
     if (!directions) {
@@ -140,6 +166,7 @@ window.NotificationUI = (() => {
       "ns-disclosure",
     );
     disclosure.setAttribute("aria-expanded", "true");
+    // 通知设备的离线清理并入“局域网聊天设备”标题右侧已有的“清除”按钮，这里只保留设置入口。
     head.append(disclosure, button("设置", openSettings, "ns-text-button"));
     const list = el("div", "ns-device-list");
     list.dataset.kind = "notification_device";
@@ -235,12 +262,16 @@ window.NotificationUI = (() => {
         }
         const peer = peerFor(id),
           name = nameFor(id),
-          online = id === localId || peer && !peer.is_offline;
+          online = isOnline(id),
+          known = named(id);
         const label = id === localId ? `${name}（本机）` : recordTitleFor(id);
         row.querySelector(".ns-name").textContent = label;
-        row.title = label;
+        // 没有可靠名称时标题是“未知设备”，原 ID 留在提示与地址行里供排查。
+        row.title = known ? label : `${label} · ${id}`;
         row.querySelector(".ns-address").textContent =
-          id === localId ? "本机通知及设备连接记录" : `${peer?.addr || "当前地址未知"} · ${online ? "在线" : "离线"}`;
+          id === localId
+            ? "本机通知及设备连接记录"
+            : `${peer?.addr || "当前地址未知"} · ${online ? "在线" : "离线"}${known ? "" : ` · ID ${shortId(id)}`}`;
         const badge = row.querySelector(".ns-badge");
         badge.textContent = android
           ? "›"
@@ -259,16 +290,7 @@ window.NotificationUI = (() => {
         );
       }
     };
-    fill(
-      receiveList,
-      [...new Set([
-        localId,
-        ...config.target_device_ids,
-        ...pushSourcePeers().map((peer) => peer.id),
-        ...historyDevices.map((peer) => peer.peer_id),
-        ...records.filter((r) => r.view_kind !== "notification_local").map((r) => r.peer_id),
-      ])],
-    );
+    fill(receiveList, deviceIds());
     renderPushSourcesPage();
     if (current) renderDetail();
     if (welcome) {
@@ -596,6 +618,12 @@ window.NotificationUI = (() => {
     try {
       const page = await invoke("notification_records", { query: { page: 1, page_size: 100 } });
       const nextRecords = Array.isArray(page) ? page : page.records || [];
+      // 设备名档案让离线设备也能显示名称。
+      deviceNames = new Map(
+        (Array.isArray(page) ? [] : page.device_names || [])
+          .map((device) => [device.peer_id, device.peer_name])
+          .filter(([peerId, name]) => isUsableName(name, peerId)),
+      );
       const nextDevices = Array.isArray(page) ? [] : page.devices || [];
       // Probe each direction so older records outside page one still determine the label.
       const directions = await Promise.all(nextDevices.filter((peer) => peer.peer_id !== localId).map(async (peer) => {
@@ -652,6 +680,140 @@ window.NotificationUI = (() => {
   function refreshSoon() {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshRecords, 60);
+  }
+  // 提示与确认优先复用界面既有的实现；缺失时退回到最小可用版本，避免静默失败。
+  function actionToast(text, duration = 2600) {
+    if (typeof window.showMessageActionToast === "function")
+      return window.showMessageActionToast(text, duration);
+    document.querySelector(".message-action-toast")?.remove();
+    const toast = el("div", "message-action-toast", text);
+    toast.setAttribute("role", "status");
+    document.body.append(toast);
+    requestAnimationFrame(() => toast.classList.add("show"));
+    setTimeout(() => {
+      toast.classList.remove("show");
+      setTimeout(() => toast.remove(), 180);
+    }, duration);
+  }
+  function confirmAction(message, onOk) {
+    if (typeof window.showConfirmDialog === "function")
+      return window.showConfirmDialog(message, onOk);
+    if (window.confirm?.(message)) return onOk();
+  }
+  function offlineListText(ids) {
+    const names = ids.map((id) => nameFor(id));
+    const shown = names.slice(0, 5).join("、");
+    return names.length > 5 ? `${shown} 等 ${names.length} 台` : shown;
+  }
+  // 清理通知设备列表里已离线的设备：记录与档案由后端按同一批 ID 删除。
+  async function clearOfflineDevices() {
+    if (!enabled || busy) return;
+    const ids = offlineDeviceIds();
+    if (!ids.length) {
+      actionToast("通知设备里没有已离线的设备");
+      return;
+    }
+    confirmAction(
+      `确定清理 ${ids.length} 台已离线的通知设备（${offlineListText(ids)}）吗？` +
+        "将删除这些设备的通知记录、通知历史与设备名称档案，并从信息推送目标中移除。" +
+        "在线设备与本机通知记录不受影响；这些设备的普通聊天、文件与其他数据不会被删除。删除后无法恢复。",
+      async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const report = await invoke("notification_clear_offline_devices", { deviceIds: ids });
+          const cleared = report?.cleared || [];
+          const kept = report?.kept || [];
+          const failures = report?.failures || [];
+          const deleted = report?.records_deleted || 0;
+          // 设置里的推送目标也已变化，先同步配置再刷新列表与计数。
+          try {
+            info = await invoke("notification_settings");
+            config = info.settings;
+          } catch (_) {}
+          await refresh();
+          const parts = [];
+          if (cleared.length)
+            parts.push(`已清理 ${cleared.length} 台离线设备及 ${deleted} 条通知记录`);
+          if (failures.length) parts.push(`${failures.length} 台删除失败，记录已保留（可重试）`);
+          if (kept.length) parts.push(`${kept.length} 台仍在线或探测可达，已保留`);
+          actionToast(parts.join("；") || "没有可清理的离线设备", failures.length || kept.length ? 7000 : 2600);
+        } catch (error) {
+          actionToast(`清理失败：${getErrorMessage(error)}`, 7000);
+        } finally {
+          busy = false;
+        }
+      },
+    );
+  }
+  // Windows：复用“局域网聊天设备”标题右侧的“清除”按钮，一次确认同时清理聊天域与通知域。
+  // 两域各自按设备 ID 处理：聊天域删记录与本机文件，通知域删通知记录/档案并移除推送目标。
+  async function clearOfflineEverywhere() {
+    if (!enabled || busy) return;
+    const chatIds = peers.filter((peer) => peer.is_offline).map((peer) => peer.id);
+    const noteIds = offlineDeviceIds();
+    if (!chatIds.length && !noteIds.length) {
+      actionToast("聊天设备与通知设备都没有已离线的设备");
+      return;
+    }
+    const scope = [];
+    if (chatIds.length)
+      scope.push(`① 聊天设备 ${chatIds.length} 台：聊天记录，以及本机管理的对应附件、接收文件与 APK 副本`);
+    if (noteIds.length)
+      scope.push(`② 通知设备 ${noteIds.length} 台：通知记录、通知历史与设备名称档案，并从信息推送目标中移除`);
+    confirmAction(
+      `确定清理已离线的设备吗？本次将同时处理两个列表。${scope.join("；")}。` +
+        "在线设备、探测仍可达的设备、本机及本机通知记录不受影响；" +
+        "原始发送文件、已安装应用与其他聊天共享的文件都会保留。删除后无法恢复。",
+      async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const report = await invoke("clear_offline_devices", {
+            chatDeviceIds: chatIds,
+            notificationDeviceIds: noteIds,
+          });
+          const chat = report?.chat || {};
+          const notes = report?.notifications || {};
+          const chatCleared = chat.cleared || [];
+          const noteCleared = notes.cleared || [];
+          if (window.currentChatPeer && chatCleared.includes(window.currentChatPeer.id)) {
+            window.performCloseChatUI?.();
+          }
+          // 两个列表与计数一起刷新；设置里的推送目标也要重新读。
+          await window.refreshPeerListNow?.();
+          try {
+            info = await invoke("notification_settings");
+            config = info.settings;
+          } catch (_) {}
+          await refresh();
+          if (current && !deviceIds().includes(current.id)) leave();
+          const parts = [];
+          if (chatCleared.length) parts.push(`聊天设备已清理 ${chatCleared.length} 台`);
+          if (noteCleared.length)
+            parts.push(
+              `通知设备已清理 ${noteCleared.length} 台及 ${notes.records_deleted || 0} 条通知记录`,
+            );
+          const chatKept = (chat.kept || []).length;
+          const noteKept = (notes.kept || []).length;
+          if (chatKept) parts.push(`聊天设备 ${chatKept} 台仍在线或可达，已保留`);
+          if (noteKept) parts.push(`通知设备 ${noteKept} 台仍在线或可达，已保留`);
+          const chatFailures = (chat.failures || []).length;
+          const noteFailures = (notes.failures || []).length;
+          if (chat.error) parts.push(`聊天域清理失败：${chat.error}（记录与本机文件已保留，可重试）`);
+          else if (chatFailures) parts.push(`聊天域 ${chatFailures} 台失败，记录与本机文件已保留（可重试）`);
+          if (noteFailures) parts.push(`通知域 ${noteFailures} 台失败，记录已保留（可重试）`);
+          if (notes.target_error) parts.push(`推送目标更新失败：${notes.target_error}（可重试）`);
+          const degraded =
+            chatFailures || noteFailures || chat.error || notes.target_error || chatKept || noteKept;
+          actionToast(parts.join("；") || "没有需要清理的离线设备", degraded ? 8000 : 3000);
+        } catch (error) {
+          actionToast(`清理失败：${getErrorMessage(error)}`, 8000);
+        } finally {
+          busy = false;
+        }
+      },
+    );
   }
   function checkRow(text, checked, action) {
     const row = el("label", "ns-check-row"),
@@ -1365,5 +1527,8 @@ window.NotificationUI = (() => {
     refreshSettings,
     setReceiveEnabled,
     refresh,
+    clearOfflineDevices,
+    clearOfflineEverywhere,
+    offlineDeviceIds,
   };
 })();

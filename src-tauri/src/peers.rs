@@ -520,12 +520,25 @@ impl PeerManager {
         my_id: &str,
     ) -> Result<serde_json::Value, String> {
         let targets = self.offline_unreachable_peer_ids().await?;
+        self.clear_offline_with_history_for(pool, my_id, targets)
+            .await
+    }
+
+    /// 用调用方已判定离线的设备执行聊天域清理。
+    /// 统一清理按钮会先算好两域共用的离线集合，再按同一批 ID 分别处理，
+    /// 避免聊天域先删掉设备档案后通知域拿不到原目标。
+    pub async fn clear_offline_with_history_for(
+        self: &Arc<Self>,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        my_id: &str,
+        targets: Vec<String>,
+    ) -> Result<serde_json::Value, String> {
         let mut cleared: Vec<String> = Vec::new();
-        let mut failures: Vec<serde_json::Value> = Vec::new();
+        let mut failure_list: Vec<serde_json::Value> = Vec::new();
         for peer_id in targets {
             let outcome = crate::storage_ops::cleanup_peer_chat_files(pool, my_id, &peer_id).await?;
             if outcome.report.failed() {
-                failures.push(serde_json::json!({
+                failure_list.push(serde_json::json!({
                     "peer_id": peer_id,
                     "deleted": outcome.report.deleted,
                     "kept": outcome.report.kept,
@@ -537,10 +550,11 @@ impl PeerManager {
             crate::storage_ops::finalize_cleanup(pool, &outcome).await;
             cleared.push(peer_id);
         }
+        let aborted = !failure_list.is_empty();
         Ok(serde_json::json!({
             "cleared": cleared,
-            "failures": failures,
-            "aborted": !failures.is_empty(),
+            "failures": failure_list,
+            "aborted": aborted,
         }))
     }
 

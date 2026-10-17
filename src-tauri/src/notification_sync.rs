@@ -291,10 +291,19 @@ async fn save_presence_history(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     event: crate::peers::PresenceHistoryEvent,
 ) {
+    // 发现/断开事件携带实时设备名，这是设备名档案最可靠的来源。
     let name = if event.peer_name.trim().is_empty() {
-        &event.peer_id
+        crate::notification_history::stored_device_name(pool, &event.peer_id)
+            .await
+            .unwrap_or_else(|| event.peer_id.clone())
     } else {
-        &event.peer_name
+        let _ = crate::notification_history::remember_device_name(
+            pool,
+            &event.peer_id,
+            &event.peer_name,
+        )
+        .await;
+        event.peer_name.clone()
     };
     let state = if event.connected { "连接" } else { "断开" };
     let notification = Notification {
@@ -472,6 +481,12 @@ pub fn dispatch_route_history(event: RouteHistoryEvent) {
     handle.spawn(async move {
         let save = async {
             let local_id = crate::db::get_user_id(&pool).await?;
+            let _ = crate::notification_history::remember_device_name(
+                &pool,
+                &event.peer_id,
+                &event.peer_name,
+            )
+            .await;
             // A send-only target must not become a receive-history source just
             // because Android displayed its connection toast. All peers are
             // independently recorded in local history by the presence worker.
@@ -575,12 +590,18 @@ pub async fn receive(
         return reply;
     };
     reset_generation(generation);
-    let name = peers
+    // 设备名档案优先于设备 ID；没有可用名称时留空，由界面显示“未知设备”。
+    let live_name = peers
         .get_all_peers()
         .into_iter()
         .find(|p| p.id == message.source_device_id)
-        .map(|p| p.name)
-        .unwrap_or_else(|| message.source_device_id.clone());
+        .map(|p| p.name);
+    let name = crate::notification_history::resolve_device_name(
+        pool,
+        &message.source_device_id,
+        live_name.as_deref(),
+    )
+    .await;
     let mut receiving = Record {
         record_id: String::new(),
         peer_id: message.source_device_id.clone(),
@@ -684,10 +705,17 @@ pub async fn send(mut message: Notification, settings: Settings) -> Result<(), S
         {
             continue;
         }
+        // 目标不在在线列表时沿用档案里的名字，绝不用目标 ID 充当地名。
+        let peer_name = crate::notification_history::resolve_device_name(
+            &pool,
+            &target,
+            peer.as_ref().map(|p| p.name.as_str()),
+        )
+        .await;
         let mut entry = Record {
             record_id: String::new(),
             peer_id: target.clone(),
-            peer_name: peer.as_ref().map(|p| p.name.clone()).unwrap_or(target),
+            peer_name,
             view_kind: "notification_push".into(),
             direction: "send".into(),
             status: "offline".into(),
@@ -870,7 +898,270 @@ pub async fn notification_record(
     crate::notification_history::get(&state.pool, &record_id).await
 }
 
+#[cfg(not(target_os = "android"))]
+async fn load_notification_settings(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Settings, String> {
+    Ok(desktop_settings(pool).await)
+}
+
+#[cfg(target_os = "android")]
+async fn load_notification_settings(_pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Settings, String> {
+    let value = crate::notification_android::settings(json!({"action":"get"}))?;
+    serde_json::from_value(value["settings"].clone()).map_err(|_| "设置读取失败".to_string())
+}
+
+#[cfg(not(target_os = "android"))]
+async fn store_notification_settings(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    settings: &Settings,
+) -> Result<(), String> {
+    if settings.target_device_ids.len() > 32
+        || settings.target_device_ids.iter().any(|id| {
+            id.is_empty()
+                || id.len() > 128
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+        })
+    {
+        return Err("推送目标设备无效".into());
+    }
+    let mut tx = pool.begin().await.map_err(|_| "设置保存失败")?;
+    sqlx::query(
+        "INSERT OR REPLACE INTO settings (key,value) VALUES ('notification_sync_desktop_v1',?)",
+    )
+    .bind(serde_json::to_string(settings).map_err(|_| "设置保存失败")?)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| "设置保存失败")?;
+    sqlx::query("INSERT OR REPLACE INTO settings (key,value) VALUES ('notification_sync_receive',?)")
+        .bind(if settings.receive_enabled { "true" } else { "false" })
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| "设置保存失败")?;
+    tx.commit().await.map_err(|_| "设置保存失败")?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+async fn store_notification_settings(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    settings: &Settings,
+) -> Result<(), String> {
+    crate::notification_android::settings(json!({"action":"save","settings":settings}))?;
+    persist_discovery_presence(pool, settings).await
+}
+
+/// 从推送目标里移除已清理的设备，返回（新设置，被移除的 ID 列表）。
+pub fn without_target_devices(settings: &Settings, remove: &[String]) -> (Settings, Vec<String>) {
+    let mut next = settings.clone();
+    let mut removed: Vec<String> = Vec::new();
+    next.target_device_ids.retain(|id| {
+        if remove.iter().any(|value| value == id) {
+            removed.push(id.clone());
+            false
+        } else {
+            true
+        }
+    });
+    (next, removed)
+}
+
+/// 待清理的候选 ID：校验格式、去重，并永远排除本机。
+pub fn cleanup_candidate_ids(device_ids: Vec<String>, local_id: &str) -> Result<Vec<String>, String> {
+    let mut requested: Vec<String> = Vec::new();
+    for id in device_ids {
+        let id = id.trim().to_string();
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+        {
+            return Err("通知设备 ID 无效".into());
+        }
+        // 本机记录永远保留。
+        if id == local_id || requested.contains(&id) {
+            continue;
+        }
+        requested.push(id);
+    }
+    Ok(requested)
+}
+
+/// 单台设备的离线判定：在线一定保留；已标记离线但地址仍能确认同一身份时也保留；
+/// 没有地址可探测（本次会话没发现过）按离线处理，与列表显示的“离线”一致。
+pub fn device_is_offline(peer: Option<&crate::peers::Peer>, reachable: bool) -> bool {
+    match peer {
+        Some(peer) if !peer.is_offline => false,
+        Some(peer) if !peer.addr.is_empty() => !reachable,
+        Some(_) => true,
+        None => true,
+    }
+}
+
+/// 逐台判定离线：在线与“探测仍可达”的设备一律保留；其余（含本次会话未发现过的）
+/// 按离线处理，与界面显示的“离线”一致。
+pub async fn classify_offline_devices(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    peers: &[crate::peers::Peer],
+    client: &reqwest::Client,
+    requested: Vec<String>,
+) -> (Vec<String>, Vec<Value>) {
+    let mut offline: Vec<String> = Vec::new();
+    let mut kept: Vec<Value> = Vec::new();
+    for id in requested {
+        let peer = peers.iter().find(|peer| peer.id == id);
+        let reachable = match peer {
+            Some(peer) if peer.is_offline && !peer.addr.is_empty() => {
+                crate::peers::same_peer_reachable(client, &id, &peer.addr).await
+            }
+            _ => false,
+        };
+        if device_is_offline(peer, reachable) {
+            offline.push(id);
+            continue;
+        }
+        let name = match crate::notification_history::stored_device_name(pool, &id).await {
+            Some(name) => name,
+            None => peer.map(|peer| peer.name.clone()).unwrap_or_default(),
+        };
+        let reason = if peer.is_some_and(|peer| !peer.is_offline) {
+            "在线"
+        } else {
+            "探测仍可连接"
+        };
+        kept.push(json!({"peer_id":id,"name":name,"reason":reason}));
+    }
+    (offline, kept)
+}
+
+/// 通知域清理：同一份实现供“通知设备卡清理”和“统一清理”使用，
+/// 保证删除记录与移除推送目标的先后和失败语义完全一致。
+pub async fn clear_notification_devices_for(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    peers: &[crate::peers::Peer],
+    client: &reqwest::Client,
+    requested: Vec<String>,
+) -> Result<Value, String> {
+    let (offline, kept) = classify_offline_devices(pool, peers, client, requested).await;
+    let mut cleared: Vec<String> = Vec::new();
+    let mut failures: Vec<Value> = Vec::new();
+    let mut records_deleted: u64 = 0;
+    let mut names_deleted: u64 = 0;
+    for id in &offline {
+        match crate::notification_history::delete_device(pool, id).await {
+            Ok((records, names)) => {
+                records_deleted += records;
+                names_deleted += names;
+                cleared.push(id.clone());
+            }
+            Err(reason) => failures.push(json!({"peer_id":id,"reason":reason})),
+        }
+    }
+    // 记录删除成功之后再移除推送目标：删除失败时引用保留，重试时该设备仍可见、可收敛。
+    let mut targets_removed: Vec<String> = Vec::new();
+    let mut target_error: Option<String> = None;
+    if !cleared.is_empty() {
+        match load_notification_settings(pool).await {
+            Ok(settings) => {
+                let (next, removed) = without_target_devices(&settings, &cleared);
+                if !removed.is_empty() {
+                    match store_notification_settings(pool, &next).await {
+                        Ok(()) => targets_removed = removed,
+                        Err(error) => target_error = Some(error),
+                    }
+                }
+            }
+            Err(error) => target_error = Some(error),
+        }
+        let _ = crate::notification_history::prune(pool).await;
+        CoreRuntime::global()
+            .event_bus()
+            .publish(CoreEvent::NotificationRecordsChanged);
+    }
+    Ok(json!({
+        "cleared":cleared, "kept":kept, "failures":failures,
+        "records_deleted":records_deleted, "names_deleted":names_deleted,
+        "targets_removed":targets_removed, "target_error":target_error,
+    }))
+}
+
+/// 核心是否真的在运行：只有它在跑时，设备列表的读取结果（哪怕是空列表）才可信。
+/// 不能用“peers 为空”推断状态不可读——重开后没有任何其他设备是合法状态。
+fn notification_core_available() -> bool {
+    CoreRuntime::global().shared_resources().is_some()
+}
+
+/// 清理通知设备里已离线的设备：通知记录、设备名档案与推送目标引用一起删除。
+/// 本机与在线设备永不清理；核心不可用时拒绝执行，不猜测在线状态。
 #[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn notification_clear_offline_devices(
+    device_ids: Vec<String>,
+    state: tauri::State<'_, crate::db::DbState>,
+    peer_state: tauri::State<'_, crate::commands::PeerState>,
+) -> Result<Value, String> {
+    let pool = &state.pool;
+    let local_id = crate::db::get_user_id(pool).await?;
+    let requested = cleanup_candidate_ids(device_ids, &local_id)?;
+    if requested.is_empty() {
+        return Ok(json!({
+            "cleared":[], "kept":[], "failures":[],
+            "records_deleted":0, "names_deleted":0, "targets_removed":[],
+            "target_error":null,
+        }));
+    }
+    if !notification_core_available() {
+        return Err("核心未运行，暂时无法确认设备在线状态，请稍后重试".into());
+    }
+    let peers = peer_state.active_manager().get_all_peers();
+    let client = crate::network::lan_http_client(Some(crate::peers::PRESENCE_PROBE_TIMEOUT))?;
+    clear_notification_devices_for(pool, &peers, &client, requested).await
+}
+
+/// Windows 统一清理：复用“局域网聊天设备”标题右侧已有的“清除”按钮，
+/// 一次确认同时处理聊天域与通知域；两域各自判定离线、各自按 ID 执行必要操作。
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn clear_offline_devices(
+    chat_device_ids: Option<Vec<String>>,
+    notification_device_ids: Option<Vec<String>>,
+    state: tauri::State<'_, crate::db::DbState>,
+    peer_state: tauri::State<'_, crate::commands::PeerState>,
+) -> Result<Value, String> {
+    let pool = &state.pool;
+    let local_id = crate::db::get_user_id(pool).await?;
+    let manager = peer_state.active_manager();
+    if !notification_core_available() {
+        return Err("核心未运行，暂时无法确认设备在线状态，请稍后重试".into());
+    }
+    let chat_ids = cleanup_candidate_ids(chat_device_ids.unwrap_or_default(), &local_id)?;
+    let note_ids = cleanup_candidate_ids(notification_device_ids.unwrap_or_default(), &local_id)?;
+    if chat_ids.is_empty() && note_ids.is_empty() {
+        return Ok(json!({
+            "chat":{"cleared":[],"kept":[],"failures":[],"aborted":false},
+            "notifications":{"cleared":[],"kept":[],"failures":[],
+                "records_deleted":0,"names_deleted":0,"targets_removed":[],"target_error":null},
+        }));
+    }
+    let peers = manager.get_all_peers();
+    let client = crate::network::lan_http_client(Some(crate::peers::PRESENCE_PROBE_TIMEOUT))?;
+    // 先通知域：此刻设备档案仍在，名称与在线状态都能读到（聊天域先删会丢失原目标）。
+    let notifications = clear_notification_devices_for(pool, &peers, &client, note_ids).await?;
+    // 再聊天域：用同一批已判定离线的设备；未发现的设备不在此域处理。
+    let (chat_offline, chat_kept) =
+        classify_offline_devices(pool, &peers, &client, chat_ids).await;
+    let mut chat_report = match manager
+        .clear_offline_with_history_for(pool, &local_id, chat_offline)
+        .await
+    {
+        Ok(report) => report,
+        // 存储层异常时保留聊天记录与本机文件，并如实回报，不影响已完成的其它域。
+        Err(error) => json!({"cleared":[], "failures":[], "aborted":true, "error":error}),
+    };
+    chat_report["kept"] = json!(chat_kept);
+    Ok(json!({"chat":chat_report, "notifications":notifications}))
+}
 #[tauri::command]
 pub fn notification_pending_activation() -> Option<Value> {
     #[cfg(windows)]
@@ -1102,6 +1393,50 @@ mod tests {
         n.source_device_id = "spoof:app".into();
         assert!(n.validate("pc").is_err());
     }
+    #[test]
+    fn offline_cleanup_never_targets_online_or_local_devices() {
+        let mut peer = crate::peers::Peer {
+            id: "phone".into(),
+            name: "手机".into(),
+            addr: "192.168.5.10:8888".into(),
+            last_seen: 1,
+            is_offline: false,
+            available_memory_mb: 0,
+            notification_push_enabled: false,
+            notification_receive_enabled: true,
+            notification_push_target_device_ids: Vec::new(),
+        };
+        // 在线设备即使探测不可达也不清理。
+        assert!(!device_is_offline(Some(&peer), false));
+        peer.is_offline = true;
+        // 已标记离线但地址仍确认是同一台设备时保留。
+        assert!(!device_is_offline(Some(&peer), true));
+        // 探测失败才算离线。
+        assert!(device_is_offline(Some(&peer), false));
+        // 没有地址可探测（本次会话没发现过）按离线处理。
+        peer.addr = String::new();
+        assert!(device_is_offline(Some(&peer), true));
+        // 设备档案里完全没有该设备：与列表一致地按离线处理。
+        assert!(device_is_offline(None, false));
+
+        let candidates = cleanup_candidate_ids(
+            vec![
+                " pc ".into(),
+                "phone".into(),
+                "pc".into(),
+                "".into(),
+            ]
+            .into_iter()
+            .filter(|id| id != "")
+            .collect(),
+            "pc",
+        )
+        .unwrap();
+        assert_eq!(candidates, vec!["phone".to_string()]);
+        assert!(cleanup_candidate_ids(vec!["bad id".into()], "pc").is_err());
+        assert!(cleanup_candidate_ids(vec!["pc".into()], "pc").unwrap().is_empty());
+    }
+
     #[test]
     fn content_identity_ignores_event_time_but_separates_sources() {
         let a = sample();

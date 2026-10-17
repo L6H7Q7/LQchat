@@ -140,6 +140,8 @@ pub fn run() {
             notification_sync::notification_settings,
             notification_sync::notification_records,
             notification_sync::notification_record,
+            notification_sync::notification_clear_offline_devices,
+            notification_sync::clear_offline_devices,
             notification_sync::notification_pending_activation,
             notification_sync::notification_action,
             notification_sync::notification_test,

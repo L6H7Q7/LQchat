@@ -1880,6 +1880,37 @@ body.android-app .android-save-bar .success-msg:not(.show) {
     white-space: nowrap;
   }
 
+  /* 通知设备卡片与上方设备卡同款：左侧刷新、右侧“清理离线”，同一行不换行。 */
+  body.android-app .android-receive-card .android-list-toolbar {
+    grid-template-columns: minmax(0, 1fr) 42px auto;
+    gap: 8px;
+  }
+
+  body.android-app .android-receive-card .android-count-label {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  body.android-app .android-receive-card .android-icon-btn {
+    grid-column: 2;
+    grid-row: 1;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+  }
+
+  body.android-app .android-receive-card .android-clear-offline-btn {
+    grid-column: 3;
+    grid-row: 1;
+    min-height: 42px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
   body.android-app .android-inline-setting {
     grid-template-columns: 82px minmax(0, 1fr);
   }

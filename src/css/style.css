@@ -3693,8 +3693,10 @@ body.android-app .file-share-btn:active {
 body.android-app {
 	/* 纯文字消息的时间（无路径/错误元信息时沿用） */
 	--msg-meta-time: #676c7d;
-	/* 气泡外元信息行的统一绿色：正常状态左侧目录与右侧时间同色 */
+	/* 接收方向正常状态的颜色 */
 	--msg-meta-path: #17835c;
+	/* 气泡外元信息行的方向色：默认（发送）= 清晰灰，接收 = 清晰绿，异常 = 清晰红 */
+	--msg-meta-row: var(--msg-meta-time);
 }
 
 /* 安卓消息列撑满聊天宽度，元信息行才能左目录贴左、右时间贴右（与 Windows 一致）。 */
@@ -3710,7 +3712,9 @@ body.android-app .message-meta {
 	justify-content: flex-start;
 	gap: 8px;
 	width: 100%;
-	max-width: calc(100vw - 96px);
+	max-width: none;
+	/* 元信息行独立于气泡方向：整行铺满聊天宽度，信息贴左、时间贴右。 */
+	align-self: stretch;
 	margin-top: 4px;
 	overflow: hidden;
 }
@@ -3718,14 +3722,21 @@ body.android-app .message-meta {
 /* 保留：发送方泡泡本身右对齐，元信息行仍左目录右时间。 */
 
 body.android-app .message-meta {
-	/* 正常状态：左侧目录与右侧时间统一使用同一种清晰绿色。 */
-	color: var(--msg-meta-path);
+	/* 方向色：默认（发送）清晰灰，接收清晰绿；错误状态由下方规则覆盖为红。 */
+	color: var(--msg-meta-row);
+}
+
+/* 接收方向：左侧目录与右侧时间统一使用同一种清晰绿色。 */
+body.android-app .message.received .message-meta {
+	--msg-meta-row: var(--msg-meta-path);
 }
 
 body.android-app .message-meta .message-meta-time,
 body.android-app .message-meta .message-meta-time .message-time {
 	flex: 0 0 auto;
 	margin: 0;
+	/* 时间固定贴右：把剩余空间全部推到时间左侧。 */
+	margin-left: auto;
 	white-space: nowrap;
 	text-align: right;
 	/* 跟随元信息行颜色：正常=绿色，出错=红色，与左侧完全一致。 */
@@ -3735,14 +3746,15 @@ body.android-app .message-meta .message-meta-time .message-time {
 	opacity: 1;
 }
 
-/* 出错状态：左侧错误信息与右侧时间统一使用同一种清晰红色。 */
-body.android-app .message-meta.meta-error,
-body.android-app .message-meta:has(.file-transfer-status:not(:empty)),
-body.android-app .message-meta:has(.file-save-state.deleted),
-body.android-app .message-meta:has(.file-save-state.inaccessible),
-body.android-app .message-meta:has(.file-save-state.action-error),
-body.android-app .message-meta:has(.file-save-state.save-failed) {
-	color: var(--msg-danger);
+/* 出错状态：不分发送/接收，左侧错误信息与右侧时间统一使用同一种清晰红色。
+   错误优先级高于方向，因此这里带 .message 前缀以取得与方向规则相同的权重，并放在其后。 */
+body.android-app .message .message-meta.meta-error,
+body.android-app .message .message-meta:has(.file-transfer-status:not(:empty)),
+body.android-app .message .message-meta:has(.file-save-state.deleted),
+body.android-app .message .message-meta:has(.file-save-state.inaccessible),
+body.android-app .message .message-meta:has(.file-save-state.action-error),
+body.android-app .message .message-meta:has(.file-save-state.save-failed) {
+	--msg-meta-row: var(--msg-danger);
 }
 
 body.android-app .message-meta .file-transfer-status {
@@ -3766,7 +3778,7 @@ body.android-app .message-meta .file-transfer-status:empty {
 	display: none;
 }
 
-body.android-app .message-meta .file-save-state.file-save-outside {
+body.android-app .message .message-meta .file-save-state.file-save-outside {
 	flex: 1 1 auto;
 	min-width: 0;
 	max-width: none;
@@ -3779,7 +3791,23 @@ body.android-app .message-meta .file-save-state.file-save-outside {
 	-webkit-box-orient: initial;
 	font-size: 11px;
 	line-height: 16px;
-	color: var(--msg-meta-path);
+	/* 跟随行颜色：发送灰、接收绿、错误红，子元素不再写死绿色。 */
+	color: inherit;
+	/* 元信息行内信息一律从行首左对齐，不跟随发送气泡右对齐。 */
+	align-self: auto;
+	text-align: left;
+}
+
+/* 元信息行里只有文字：不再显示旧的“标签”底色/边框/圆角（否则铺满整行时会出现一条底色块）。 */
+body.android-app .message-meta .file-save-state.file-save-outside,
+body.android-app .message-meta .file-save-state.file-save-outside.deleted,
+body.android-app .message-meta .file-save-state.file-save-outside.inaccessible,
+body.android-app .message-meta .file-save-state.file-save-outside.action-error,
+body.android-app .message-meta .file-save-state.file-save-outside.save-failed {
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 body.android-app .message-meta .file-save-state.file-save-outside.deleted,
@@ -3789,8 +3817,9 @@ body.android-app .message-meta .file-save-state.file-save-outside.save-failed {
 	color: var(--msg-danger);
 }
 
-/* 有错误信息时只显示错误，不再显示目录，避免重叠或绿色成功误导。 */
-body.android-app .message-meta.meta-error .file-save-state {
+/* 有错误信息时只显示错误，不再显示目录，避免重叠或绿色成功误导。
+   权重与上面的元信息行目录规则相同（都带 .message），并放在其后，确保隐藏生效。 */
+body.android-app .message .message-meta.meta-error .file-save-state {
 	display: none;
 }
 

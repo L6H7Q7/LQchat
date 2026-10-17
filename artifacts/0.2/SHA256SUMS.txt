@@ -1,3 +1,0 @@
-81e40732bf6606c349df368d583c9ebe344f1187eac4bbbf6c39f85b430f9336  LQ-Chat-0.2-android-arm64.apk
-a12aee5c5303752ca9e0bc7628bb2858ed2f0433d41b0040d0cced43d496d2ae  LQ-Chat-0.2-build1024-android-arm64.apk
-928c0485201f6349c96be1d2da80b3248d38aa6a76fea86b1fdbad4c3ebe471d  LQ-Chat-0.2-functional-candidate-windows.exe

@@ -1,7 +1,0 @@
-{
-  "auto_download": true,
-  "close_to_tray": true,
-  "db_path": "./data/lanchat.db",
-  "download_path": "/data/user/0/com.lanchat.app/received_files",
-  "port": "8888"
-}

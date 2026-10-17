@@ -54,6 +54,16 @@ async function renderPage() {
       button.disabled = false;
     }
   });
+  document.getElementById("android-clear-offline-receive-btn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      await window.NotificationUI?.clearOfflineDevices?.();
+    } finally {
+      button.disabled = false;
+    }
+  });
   document.getElementById("android-edit-name-btn")?.addEventListener("click", () => document.getElementById("my-name")?.click());
   try {
     if (!window.__TAURI__) throw new Error("preview");

@@ -25,6 +25,8 @@
     "allow-set-notification-sound-enabled",
     "allow-notification-settings",
     "allow-notification-records",
+    "allow-notification-clear-offline-devices",
+    "allow-clear-offline-devices",
     "allow-custom-reminder-settings",
     "allow-get-background-runtime-settings",
     "allow-set-background-runtime-settings",

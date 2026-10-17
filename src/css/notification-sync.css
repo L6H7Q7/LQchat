@@ -111,7 +111,12 @@ body.notification-enabled #user-list {
   color: var(--ns-muted);
   font-size: 11px;
   user-select: text;
+  /* 未知设备的 ID 提示也保持单行，不挤压计数与状态。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
 .ns-badge {
   flex-shrink: 0;
   font-size: 11px;
